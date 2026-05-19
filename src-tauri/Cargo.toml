@@ -1,0 +1,46 @@
+[package]
+name = "autoevaluacion-cna"
+version = "0.1.0"
+description = "Aplicacion local para gobernar encuestas de autoevaluacion CNA"
+authors = ["Universidad de La Sabana"]
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+# The `_lib` suffix may seem redundant but it is necessary
+# to make the lib name unique and wouldn't conflict with the bin name.
+# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
+name = "autoevaluacion_cna_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+async-trait = "0.1.89"
+libsql = "0.9.30"
+thiserror = "2.0.18"
+chrono = { version = "0.4.44", features = ["serde"] }
+uuid = { version = "1.23.1", features = ["v4", "serde"] }
+tokio = { version = "1.52.2", features = ["io-util", "macros", "net", "rt-multi-thread"] }
+calamine = "0.34.0"
+tauri-plugin-dialog = "2.7.1"
+reqwest = { version = "0.13.3", features = ["form", "json"] }
+sha2 = "0.11.0"
+base64 = "0.22.1"
+rand = "0.10.1"
+url = "2.5.8"
+serde_urlencoded = "0.7.1"
+open = "5.3.4"
+rust_xlsxwriter = "0.94.1"
+docx-rs = "0.4.20"
+quick-xml = "0.39.3"
+zip = "8.6.0"
+
+[dev-dependencies]
+mockall = "0.14.0"

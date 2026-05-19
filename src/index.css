@@ -1,0 +1,157 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+  --color-background: oklch(0.972 0.006 260);
+  --color-foreground: oklch(0.2 0.025 258);
+  --color-card: oklch(0.996 0.002 260);
+  --color-card-foreground: oklch(0.2 0.025 258);
+  --color-primary: oklch(0.56 0.18 255);
+  --color-primary-foreground: oklch(0.99 0.006 260);
+  --color-secondary: oklch(0.63 0.18 292);
+  --color-secondary-foreground: oklch(0.99 0.006 292);
+  --color-accent: oklch(0.68 0.18 335);
+  --color-accent-foreground: oklch(0.99 0.006 335);
+  --color-muted: oklch(0.925 0.006 260);
+  --color-muted-foreground: oklch(0.47 0.028 258);
+  --color-border: oklch(0.875 0.009 260);
+  --color-destructive: oklch(0.55 0.18 28);
+  --color-ring: oklch(0.43 0.12 205);
+  --radius-lg: 8px;
+  --radius-md: 6px;
+  --radius-sm: 4px;
+  --animate-accordion-down: accordion-down 0.2s ease-out;
+  --animate-accordion-up: accordion-up 0.2s ease-out;
+}
+
+@keyframes accordion-down {
+  from {
+    height: 0;
+  }
+  to {
+    height: var(--radix-accordion-content-height);
+  }
+}
+
+@keyframes accordion-up {
+  from {
+    height: var(--radix-accordion-content-height);
+  }
+  to {
+    height: 0;
+  }
+}
+
+:root[data-theme="dark"] {
+  --color-background: oklch(0.16 0.014 260);
+  --color-foreground: oklch(0.955 0.012 260);
+  --color-card: oklch(0.23 0.018 260);
+  --color-card-foreground: oklch(0.955 0.012 260);
+  --color-primary: oklch(0.72 0.15 255);
+  --color-primary-foreground: oklch(0.16 0.03 258);
+  --color-secondary: oklch(0.74 0.16 292);
+  --color-secondary-foreground: oklch(0.14 0.03 292);
+  --color-accent: oklch(0.74 0.16 335);
+  --color-accent-foreground: oklch(0.15 0.03 335);
+  --color-muted: oklch(0.285 0.018 260);
+  --color-muted-foreground: oklch(0.74 0.022 258);
+  --color-border: oklch(0.34 0.018 260);
+  --color-destructive: oklch(0.68 0.16 28);
+  --color-ring: oklch(0.72 0.12 205);
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+
+  body {
+    margin: 0;
+    min-width: 320px;
+    min-height: 100vh;
+    background:
+      linear-gradient(135deg, color-mix(in oklch, var(--color-background), white 48%) 0%, var(--color-background) 42%, color-mix(in oklch, var(--color-secondary), transparent 91%) 100%),
+      linear-gradient(90deg, color-mix(in oklch, var(--color-primary), transparent 94%), transparent 42%, color-mix(in oklch, var(--color-accent), transparent 95%));
+    color: var(--color-foreground);
+    font-family: var(--font-sans);
+  }
+
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+
+  ::selection {
+    background: color-mix(in oklch, var(--color-primary), transparent 72%);
+  }
+}
+
+@layer components {
+  .apple-glass {
+    border: 1px solid color-mix(in oklch, white, transparent 44%);
+    background:
+      linear-gradient(180deg, color-mix(in oklch, white, transparent 14%), color-mix(in oklch, var(--color-card), transparent 22%)),
+      color-mix(in oklch, var(--color-card), transparent 10%);
+    box-shadow:
+      0 24px 70px color-mix(in oklch, black, transparent 90%),
+      0 1px 0 color-mix(in oklch, white, transparent 60%) inset;
+    backdrop-filter: blur(28px) saturate(1.35);
+  }
+
+  .apple-hero {
+    position: relative;
+    overflow: hidden;
+    border-radius: var(--radius-lg);
+    border: 1px solid color-mix(in oklch, white, transparent 38%);
+    background:
+      linear-gradient(135deg, color-mix(in oklch, white, transparent 6%), color-mix(in oklch, var(--color-card), transparent 12%) 48%, color-mix(in oklch, var(--color-primary), transparent 87%)),
+      color-mix(in oklch, var(--color-card), transparent 8%);
+    box-shadow:
+      0 28px 90px color-mix(in oklch, black, transparent 90%),
+      0 1px 0 color-mix(in oklch, white, transparent 55%) inset;
+    backdrop-filter: blur(30px) saturate(1.35);
+  }
+
+  .apple-hero::after {
+    position: absolute;
+    inset: auto 0 0;
+    height: 1px;
+    content: "";
+    background: linear-gradient(90deg, transparent, color-mix(in oklch, var(--color-primary), white 20%), color-mix(in oklch, var(--color-accent), white 12%), transparent);
+  }
+
+  :root[data-theme="dark"] .apple-hero {
+    background:
+      linear-gradient(135deg, color-mix(in oklch, white, transparent 93%), color-mix(in oklch, var(--color-card), transparent 8%) 48%, color-mix(in oklch, var(--color-primary), transparent 88%)),
+      color-mix(in oklch, var(--color-card), transparent 5%);
+  }
+
+  .apple-tile {
+    border-radius: var(--radius-lg);
+    border: 1px solid color-mix(in oklch, var(--color-border), white 16%);
+    background:
+      linear-gradient(180deg, color-mix(in oklch, white, transparent 22%), color-mix(in oklch, var(--color-card), transparent 12%)),
+      color-mix(in oklch, var(--color-card), transparent 8%);
+    box-shadow: 0 16px 44px color-mix(in oklch, black, transparent 92%);
+    backdrop-filter: blur(18px) saturate(1.2);
+  }
+
+  .glass-action {
+    border-radius: var(--radius-lg);
+    border: 1px solid color-mix(in oklch, var(--color-primary), white 52%);
+    background:
+      linear-gradient(135deg, color-mix(in oklch, var(--color-primary), white 14%), color-mix(in oklch, var(--color-secondary), white 10%));
+    box-shadow:
+      0 18px 48px color-mix(in oklch, var(--color-primary), transparent 76%),
+      0 1px 0 color-mix(in oklch, white, transparent 48%) inset;
+    color: var(--color-primary-foreground);
+  }
+
+  .workflow-pill {
+    border-radius: 999px;
+    border: 1px solid color-mix(in oklch, var(--color-border), white 18%);
+    background: color-mix(in oklch, var(--color-card), transparent 16%);
+    box-shadow: 0 10px 28px color-mix(in oklch, black, transparent 94%);
+    backdrop-filter: blur(18px) saturate(1.2);
+  }
+}

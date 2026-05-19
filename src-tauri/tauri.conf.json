@@ -1,0 +1,53 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Autoevaluacion CNA",
+  "version": "0.1.0",
+  "identifier": "edu.unisabana.autoevaluacion",
+  "build": {
+    "beforeDevCommand": "bun run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "bun run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Autoevaluacion CNA",
+        "width": 1280,
+        "height": 820,
+        "minWidth": 980,
+        "minHeight": 680
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: http://asset.localhost data:; connect-src ipc: http://ipc.localhost http://localhost:* https://login.microsoftonline.com https://graph.microsoft.com"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["deb", "rpm", "appimage", "msi", "nsis"],
+    "category": "Office",
+    "shortDescription": "Autoevaluacion CNA",
+    "longDescription": "Aplicacion local para gestionar lineamientos, preguntas, instrumentos, revision de proveedor e historiales de autoevaluacion CNA.",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "fileAssociations": [
+      {
+        "ext": ["acna"],
+        "name": "Autoevaluacion CNA database package",
+        "description": "Portable Autoevaluacion CNA database with history",
+        "mimeType": "application/vnd.unisabana.autoevaluacion-cna"
+      }
+    ],
+    "windows": {
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper"
+      }
+    }
+  }
+}
