@@ -96,6 +96,9 @@ impl AutoEvaluationService {
                     .collect(),
             )
             .await?;
+        self.repository
+            .create_baseline_history_snapshot("Fijacion de original", editor_name)
+            .await?;
 
         Ok(build_baseline_status(
             baseline_questions,

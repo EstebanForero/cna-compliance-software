@@ -26,6 +26,110 @@ pub struct LibSqlAutoEvalRepository {
     connection: Connection,
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::{OriginalQuestionSnapshot, QuestionScope, QuestionStatus};
+    use crate::repository::AutoEvalRepository;
+
+    fn original_snapshot(id: &str, text: &str) -> OriginalQuestionSnapshot {
+        OriginalQuestionSnapshot {
+            id: id.into(),
+            question_id: "q-1".into(),
+            source_document_id: format!("source-{id}"),
+            code: "EST-001".into(),
+            text: text.into(),
+            scope: QuestionScope::Institutional,
+            format: "likert".into(),
+            convention_code: Some("A".into()),
+            status: QuestionStatus::Keep,
+            factor: "Factor 1".into(),
+            characteristic: "Caracteristica 1".into(),
+            aspect: "Aspecto 1".into(),
+            audiences: vec!["Estudiantes".into()],
+            content_hash: format!("hash-{id}"),
+            marked_by: "Test Editor".into(),
+            marked_at: Utc::now(),
+        }
+    }
+
+    #[tokio::test]
+    async fn replacing_original_snapshots_preserves_previous_originals_as_history() {
+        let repository = LibSqlAutoEvalRepository::open_in_memory().await.unwrap();
+
+        repository
+            .replace_original_snapshots(
+                "source-original",
+                vec![original_snapshot("one", "Original")],
+            )
+            .await
+            .unwrap();
+        repository
+            .replace_original_snapshots(
+                "source-replacement",
+                vec![original_snapshot("two", "Replacement")],
+            )
+            .await
+            .unwrap();
+
+        let current = repository.list_original_snapshots().await.unwrap();
+        assert_eq!(current.len(), 1);
+        assert_eq!(current[0].id, "two");
+        assert_eq!(current[0].text, "Replacement");
+
+        let mut rows = repository
+            .connection
+            .query(
+                "SELECT COUNT(*), SUM(is_current)
+                 FROM question_original_snapshots
+                 WHERE code = 'EST-001'",
+                (),
+            )
+            .await
+            .unwrap();
+        let row = rows.next().await.unwrap().unwrap();
+        let total: i64 = row.get(0).unwrap();
+        let current_total: i64 = row.get(1).unwrap();
+
+        assert_eq!(total, 2);
+        assert_eq!(current_total, 1);
+    }
+
+    #[tokio::test]
+    async fn restoring_history_snapshot_restores_original_baseline() {
+        let repository = LibSqlAutoEvalRepository::open_in_memory().await.unwrap();
+
+        repository
+            .replace_original_snapshots(
+                "source-original",
+                vec![original_snapshot("one", "Original")],
+            )
+            .await
+            .unwrap();
+        let snapshot = repository
+            .create_baseline_history_snapshot("Fijacion de original", "Test Editor")
+            .await
+            .unwrap();
+        repository
+            .replace_original_snapshots(
+                "source-replacement",
+                vec![original_snapshot("two", "Replacement")],
+            )
+            .await
+            .unwrap();
+
+        repository
+            .restore_history_snapshot(&snapshot.id)
+            .await
+            .unwrap();
+
+        let current = repository.list_original_snapshots().await.unwrap();
+        assert_eq!(current.len(), 1);
+        assert_eq!(current[0].id, "one");
+        assert_eq!(current[0].text, "Original");
+    }
+}
+
 impl LibSqlAutoEvalRepository {
     pub async fn open(path: impl AsRef<std::path::Path>) -> Result<Self, AppError> {
         let database = Builder::new_local(path).build().await?;
@@ -59,6 +163,7 @@ impl LibSqlAutoEvalRepository {
         let data = history::PersistedSnapshot {
             questions: self.list_questions().await?,
             guideline_aspects: self.list_guideline_aspects().await?,
+            original_snapshots: self.list_original_snapshots().await?,
         };
         history::create_snapshot(
             &self.connection,
@@ -249,7 +354,7 @@ impl AutoEvalRepository for LibSqlAutoEvalRepository {
         snapshots: Vec<OriginalQuestionSnapshot>,
     ) -> Result<(), AppError> {
         self.connection
-            .execute("DELETE FROM question_original_snapshots", ())
+            .execute("UPDATE question_original_snapshots SET is_current = 0", ())
             .await?;
 
         for snapshot in snapshots {
@@ -258,8 +363,8 @@ impl AutoEvalRepository for LibSqlAutoEvalRepository {
                     "INSERT INTO question_original_snapshots
                         (id, question_id, source_document_id, code, text, scope, format,
                          convention_code, status, factor, characteristic, aspect, audiences_json,
-                         content_hash, marked_by, marked_at)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+                         content_hash, marked_by, marked_at, is_current)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, 1)",
                     params![
                         snapshot.id.as_str(),
                         snapshot.question_id.as_str(),
@@ -293,6 +398,7 @@ impl AutoEvalRepository for LibSqlAutoEvalRepository {
                         convention_code, status, factor, characteristic, aspect, audiences_json,
                         content_hash, marked_at, marked_by
                  FROM question_original_snapshots
+                 WHERE is_current = 1
                  ORDER BY code",
                 (),
             )
@@ -372,6 +478,15 @@ impl AutoEvalRepository for LibSqlAutoEvalRepository {
             .await
     }
 
+    async fn create_baseline_history_snapshot(
+        &self,
+        summary: &str,
+        editor_name: &str,
+    ) -> Result<HistorySnapshot, AppError> {
+        self.create_history_snapshot_with_kind(summary, editor_name, "baseline", false)
+            .await
+    }
+
     async fn list_history_snapshots(&self) -> Result<Vec<HistorySnapshot>, AppError> {
         history::list_snapshots(&self.connection).await
     }
@@ -420,6 +535,40 @@ impl AutoEvalRepository for LibSqlAutoEvalRepository {
                 .collect(),
         )
         .await?;
+
+        self.connection
+            .execute("UPDATE question_original_snapshots SET is_current = 0", ())
+            .await?;
+
+        for snapshot in data.original_snapshots {
+            self.connection
+                .execute(
+                    "INSERT OR REPLACE INTO question_original_snapshots
+                        (id, question_id, source_document_id, code, text, scope, format,
+                         convention_code, status, factor, characteristic, aspect, audiences_json,
+                         content_hash, marked_by, marked_at, is_current)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, 1)",
+                    params![
+                        snapshot.id.as_str(),
+                        snapshot.question_id.as_str(),
+                        snapshot.source_document_id.as_str(),
+                        snapshot.code.as_str(),
+                        snapshot.text.as_str(),
+                        snapshot.scope.as_str(),
+                        snapshot.format.as_str(),
+                        snapshot.convention_code.clone().unwrap_or_default(),
+                        snapshot.status.as_str(),
+                        snapshot.factor.as_str(),
+                        snapshot.characteristic.as_str(),
+                        snapshot.aspect.as_str(),
+                        serde_json::to_string(&snapshot.audiences)?,
+                        snapshot.content_hash.as_str(),
+                        snapshot.marked_by.as_str(),
+                        snapshot.marked_at.to_rfc3339(),
+                    ],
+                )
+                .await?;
+        }
 
         Ok(())
     }

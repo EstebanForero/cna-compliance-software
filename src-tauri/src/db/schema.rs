@@ -119,11 +119,9 @@ pub(super) async fn migrate(connection: &Connection) -> Result<(), AppError> {
                 audiences_json TEXT NOT NULL,
                 content_hash TEXT NOT NULL,
                 marked_by TEXT NOT NULL,
-                marked_at TEXT NOT NULL
+                marked_at TEXT NOT NULL,
+                is_current INTEGER NOT NULL DEFAULT 1
             );
-
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_original_snapshots_unique_code
-                ON question_original_snapshots (code);
 
             CREATE TABLE IF NOT EXISTS instrument_exports (
                 id TEXT PRIMARY KEY,
@@ -160,6 +158,47 @@ pub(super) async fn migrate(connection: &Connection) -> Result<(), AppError> {
 
     migrate_provider_reviews_to_instruments(connection).await?;
     migrate_history_snapshots_kind(connection).await?;
+    migrate_original_snapshots_current_marker(connection).await?;
+
+    Ok(())
+}
+
+async fn migrate_original_snapshots_current_marker(
+    connection: &Connection,
+) -> Result<(), AppError> {
+    let mut rows = connection
+        .query("PRAGMA table_info(question_original_snapshots)", ())
+        .await?;
+    let mut has_is_current = false;
+    while let Some(row) = rows.next().await? {
+        let column_name: String = row.get(1)?;
+        if column_name == "is_current" {
+            has_is_current = true;
+            break;
+        }
+    }
+
+    if !has_is_current {
+        connection
+            .execute(
+                "ALTER TABLE question_original_snapshots
+                 ADD COLUMN is_current INTEGER NOT NULL DEFAULT 1",
+                (),
+            )
+            .await?;
+    }
+
+    connection
+        .execute_batch(
+            "
+            DROP INDEX IF EXISTS idx_original_snapshots_unique_code;
+
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_original_snapshots_current_unique_code
+                ON question_original_snapshots (code)
+                WHERE is_current = 1;
+            ",
+        )
+        .await?;
 
     Ok(())
 }

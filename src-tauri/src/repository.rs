@@ -57,6 +57,11 @@ pub trait AutoEvalRepository: Send + Sync {
         summary: &str,
         editor_name: &str,
     ) -> Result<HistorySnapshot, AppError>;
+    async fn create_baseline_history_snapshot(
+        &self,
+        summary: &str,
+        editor_name: &str,
+    ) -> Result<HistorySnapshot, AppError>;
     async fn list_history_snapshots(&self) -> Result<Vec<HistorySnapshot>, AppError>;
     async fn restore_history_snapshot(&self, snapshot_id: &str) -> Result<(), AppError>;
     async fn delete_history_snapshot(&self, snapshot_id: &str) -> Result<(), AppError>;

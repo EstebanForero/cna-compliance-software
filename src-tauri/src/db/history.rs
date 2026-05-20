@@ -3,13 +3,15 @@ use libsql::{params, Connection};
 use uuid::Uuid;
 
 use crate::db::rows::parse_history_snapshot_row;
-use crate::domain::{GuidelineAspect, HistorySnapshot, Question};
+use crate::domain::{GuidelineAspect, HistorySnapshot, OriginalQuestionSnapshot, Question};
 use crate::error::AppError;
 
 #[derive(serde::Serialize, serde::Deserialize)]
 pub(super) struct PersistedSnapshot {
     pub(super) questions: Vec<Question>,
     pub(super) guideline_aspects: Vec<GuidelineAspect>,
+    #[serde(default)]
+    pub(super) original_snapshots: Vec<OriginalQuestionSnapshot>,
 }
 
 pub(super) async fn create_snapshot(
