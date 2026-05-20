@@ -374,7 +374,7 @@ async fn import_workbook(
 ) -> Result<ImportWorkbookResult, CommandError> {
     let (service, _) = state.snapshot()?;
     let editor = state.current_editor_name()?;
-    let result = service.import_workbook(request).await?;
+    let result = service.import_workbook(request, &editor).await?;
     service
         .record_change(
             "source_document",

@@ -281,16 +281,29 @@ async fn imports_and_exports_consolidated_workbook_without_losing_structure() {
     let repository = Arc::new(LibSqlAutoEvalRepository::open_in_memory().await.unwrap());
     let service = AutoEvaluationService::new(repository.clone());
     let import_result = service
-        .import_workbook(ImportWorkbookRequest {
-            path: input_path.to_string_lossy().into_owned(),
-            cycle_name: Some("Roundtrip".into()),
-        })
+        .import_workbook(
+            ImportWorkbookRequest {
+                path: input_path.to_string_lossy().into_owned(),
+                cycle_name: Some("Roundtrip".into()),
+            },
+            "Test Editor",
+        )
         .await
         .unwrap();
 
     let imported_questions = repository.list_questions().await.unwrap();
     let imported_aspects = repository.list_guideline_aspects().await.unwrap();
+    let initial_original = repository.list_original_snapshots().await.unwrap();
+    let fixation_history = repository.list_history_snapshots().await.unwrap();
     assert_eq!(imported_questions.len(), import_result.imported_questions);
+    assert_eq!(initial_original.len(), imported_questions.len());
+    assert!(imported_questions
+        .iter()
+        .all(|question| question.status == QuestionStatus::Keep));
+    assert!(fixation_history.iter().any(|snapshot| {
+        snapshot.snapshot_kind == "baseline"
+            && snapshot.summary == "Fijacion inicial desde consolidado"
+    }));
     assert_eq!(
         imported_aspects.len(),
         import_result.imported_guideline_aspects

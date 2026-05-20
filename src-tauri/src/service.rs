@@ -266,9 +266,12 @@ impl AutoEvaluationService {
     pub async fn import_workbook(
         &self,
         request: ImportWorkbookRequest,
+        editor_name: &str,
     ) -> Result<ImportWorkbookResult, AppError> {
         let path = std::path::PathBuf::from(&request.path);
         let parsed = parse_questions_workbook(&path)?;
+        let should_fix_initial_original =
+            self.repository.list_original_snapshots().await?.is_empty();
         let cycle_name = request
             .cycle_name
             .filter(|value| !value.trim().is_empty())
@@ -286,16 +289,35 @@ impl AutoEvaluationService {
             .unwrap_or("consolidado.xlsx")
             .to_string();
 
+        let source_document = NewSourceDocument {
+            id: source_document_id.clone(),
+            file_name: file_name.clone(),
+            path: request.path,
+            document_type: "questions_consolidated".into(),
+            imported_rows: imported,
+            skipped_rows: parsed.skipped_rows,
+        };
         self.repository
-            .save_source_document(NewSourceDocument {
-                id: source_document_id.clone(),
-                file_name: file_name.clone(),
-                path: request.path,
-                document_type: "questions_consolidated".into(),
-                imported_rows: imported,
-                skipped_rows: parsed.skipped_rows,
-            })
+            .save_source_document(source_document.clone())
             .await?;
+
+        if should_fix_initial_original && imported > 0 {
+            let questions = self.repository.list_questions().await?;
+            let source_document = self
+                .repository
+                .get_source_document(&source_document_id)
+                .await?
+                .ok_or_else(|| {
+                    AppError::Validation("imported source document was not saved".into())
+                })?;
+            self.mark_questions_as_original_baseline(
+                questions,
+                source_document,
+                editor_name,
+                "Fijacion inicial desde consolidado",
+            )
+            .await?;
+        }
 
         Ok(ImportWorkbookResult {
             source_document_id,

@@ -54,6 +54,22 @@ impl AutoEvaluationService {
         }
         .ok_or_else(|| AppError::Validation("no imported source document found".into()))?;
 
+        self.mark_questions_as_original_baseline(
+            questions,
+            source_document,
+            editor_name,
+            "Fijacion de original",
+        )
+        .await
+    }
+
+    pub(super) async fn mark_questions_as_original_baseline(
+        &self,
+        questions: Vec<Question>,
+        source_document: SourceDocument,
+        editor_name: &str,
+        history_summary: &str,
+    ) -> Result<BaselineStatus, AppError> {
         let baseline_questions = questions
             .into_iter()
             .map(|mut question| {
@@ -97,7 +113,7 @@ impl AutoEvaluationService {
             )
             .await?;
         self.repository
-            .create_baseline_history_snapshot("Fijacion de original", editor_name)
+            .create_baseline_history_snapshot(history_summary, editor_name)
             .await?;
 
         Ok(build_baseline_status(
