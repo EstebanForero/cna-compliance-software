@@ -10,7 +10,7 @@
 - **Validation:** checks blocking readiness conditions before provider delivery or export.
 - **Export:** generates consolidated and instrument Excel workbooks from the database, comparing current questions against the original baseline and applying change colors.
 - **Provider:** tracks provider links and validation status after delivery.
-- **Provider Review:** checklist grouped by instrument/audience. Reviewers mark each delivered question as correct, needs modification, or missing; they can attach evidence paths or local images and export a Word report for the selected instrument.
+- **Provider Review:** checklist grouped by the same exported instrument workbooks used by the export screen. Reviewers mark each delivered question as correct, needs modification, or missing; they can attach evidence paths or local images and export a Word report for the selected instrument.
 - **Persistence:** libSQL/Turso-compatible repository with modules by responsibility: schema, row parsing, helpers, history snapshots, provider reviews, questions and lineamientos.
 - **Portable Database Package:** `.acna` files are complete Autoevaluacion CNA database packages. They are the same libSQL/SQLite database content under a domain-specific extension so the OS can associate them with the desktop app.
 
@@ -25,6 +25,8 @@
   - editor profile already saved
 - The baseline stores immutable question snapshots with content hashes.
 - Current questions are compared against the baseline by question code and content hash.
+- Operational status is part of export diff semantics: `Modificar`, `Agregar` and `Eliminar` must force blue, green and red export rows respectively, even when the textual content hash is otherwise unchanged.
+- Questions that exist in the original baseline but no longer exist in the current bank are still emitted as removed rows during export so consolidated and instrument files keep the historical red deletion trace.
 
 ## Export Rules
 
@@ -34,13 +36,18 @@
   - red: removed questions
   - blue: modified questions
   - green: added questions
+- The same color semantics apply to consolidated and instrument exports, including the `Por orden` and `Por lineamiento` instrument sheets.
 - Consolidated exports preserve the question, lineamiento, characteristic and status data needed to reopen the cycle.
-- Instrument exports use the same diff engine and generate:
-  - `Por lineamiento`: questions grouped by CNA hierarchy, with one column per audience/instrument.
-  - `Por orden`: question-order view with one column per audience/instrument.
+- Instrument exports use the same diff engine and generate one workbook per public/audience group, matching the sample files. Each workbook contains:
+  - `Por lineamiento`: questions grouped by CNA hierarchy, with one column per subpublic.
+  - `Por orden`: question-order view, with one column per subpublic.
   - `Convención`: readable mapping for imported convention codes and question formats.
+- Instrument públicos are derived by the backend from the same grouping used by the exporter, not from independent frontend parsing. This prevents the UI from offering públicos that cannot be exported.
+- The consolidated workbook stores público and tipo de público separately. Instruments collapse that into one workbook per main público and subpublic columns. Example: `0Estudiantes + 00Pregrado` becomes the `Estudiantes` workbook with an `Estudiantes Pregrado` column; `1Profesores_Planta + 10Pregrado` becomes the `Profesores de planta` workbook with a `Profesores Pregrado` column.
+- Instrument display labels follow the historical templates: `Maestrías` is displayed as `Maestría`, `Maestrías virtuales` as `Maestría Virtual`, `Especializaciones MQ` as `EMQ`, and `Especializaciones virtuales/extensión` as `Especializaciones virtual / extensión`.
+- Público/subpúblico normalization is centralized in the Rust audience module and shared by import, export and provider review. Frontend screens consume backend-derived options instead of reimplementing these rules.
 - Exported worksheets use wrapped text, frozen headers and row heights suitable for long CNA text.
-- Provider review DOCX exports are scoped to one selected instrument/audience. Supported local evidence images (`png`, `jpg`, `jpeg`, `webp`, `bmp`, `gif`) are embedded in the document; unsupported files remain as evidence paths.
+- Provider review DOCX exports are scoped to one selected exported instrument workbook. Supported local evidence images (`png`, `jpg`, `jpeg`, `webp`, `bmp`, `gif`) are embedded in the document; unsupported files remain as evidence paths.
 
 ## History Rules
 
@@ -71,7 +78,9 @@
 
 ## Provider Review Rules
 
-- Provider review is instrument-first, because each audience receives a different instrument assembled from the consolidated question bank.
-- The default review filter shows pending items for the selected instrument.
-- Resetting reviews can be scoped to one instrument/audience.
-- DOCX reports include status, observation and evidence for the selected instrument only.
+- Provider review is exported-instrument-first and must show the same main instrument groups as the export screen: `Administrativos`, `Directivos`, `Estudiantes`, `Profesores de cátedra` and `Profesores de planta` when those groups exist in the imported data.
+- Público/subpúblico columns are not independent provider review scopes. They stay inside the exported workbook, so `Estudiantes Pregrado` and `Estudiantes Maestría Virtual` both review under the `Estudiantes` instrument.
+- Provider review stores a stable exported-instrument key and a display label. UI cards, filters and DOCX reports show the display label, while save/reset operations use the stable key.
+- The default review filter shows pending items for the selected exported instrument.
+- Resetting reviews is scoped to the selected exported instrument.
+- DOCX reports include status, observation and evidence for the selected exported instrument only.

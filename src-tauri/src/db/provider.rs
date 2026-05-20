@@ -2,6 +2,7 @@ use chrono::Utc;
 use libsql::{params, Connection};
 use uuid::Uuid;
 
+use crate::audience::provider_instrument_key;
 use crate::db::helpers::empty_to_none;
 use crate::db::rows::{parse_provider_question_review_row, parse_rfc3339_utc};
 use crate::domain::{
@@ -138,21 +139,47 @@ pub(super) async fn save_provider_question_review(
 
 pub(super) async fn reset_provider_question_reviews(
     connection: &Connection,
+    instrument_audience: Option<&str>,
 ) -> Result<usize, AppError> {
-    let count = {
+    if let Some(instrument) = instrument_audience {
+        let target = provider_instrument_key(instrument);
+        let mut rows = connection
+            .query(
+                "SELECT id, instrument_audience FROM provider_question_reviews",
+                (),
+            )
+            .await?;
+        let mut matching_ids = Vec::new();
+        while let Some(row) = rows.next().await? {
+            let id = row.get::<String>(0)?;
+            let stored_instrument = row.get::<String>(1)?;
+            if provider_instrument_key(&stored_instrument) == target {
+                matching_ids.push(id);
+            }
+        }
+        let count = matching_ids.len();
+        for id in matching_ids {
+            connection
+                .execute(
+                    "DELETE FROM provider_question_reviews WHERE id = ?1",
+                    [id.as_str()],
+                )
+                .await?;
+        }
+        Ok(count)
+    } else {
         let mut rows = connection
             .query("SELECT COUNT(*) FROM provider_question_reviews", ())
             .await?;
-        rows.next()
+        let count = rows
+            .next()
             .await?
             .map(|row| row.get::<i64>(0))
             .transpose()?
-            .unwrap_or(0)
-    };
-
-    connection
-        .execute("DELETE FROM provider_question_reviews", ())
-        .await?;
-
-    Ok(count.max(0) as usize)
+            .unwrap_or(0);
+        connection
+            .execute("DELETE FROM provider_question_reviews", ())
+            .await?;
+        Ok(count.max(0) as usize)
+    }
 }

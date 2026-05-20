@@ -1,7 +1,8 @@
-import { save } from "@tauri-apps/plugin-dialog";
+import { open, save } from "@tauri-apps/plugin-dialog";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { Download, FileCheck2 } from "lucide-react";
+import { useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -12,6 +13,13 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { api } from "@/lib/api";
 
 export const Route = createFileRoute("/exports")({
@@ -19,11 +27,17 @@ export const Route = createFileRoute("/exports")({
 });
 
 function ExportsPage() {
+  const [selectedPublic, setSelectedPublic] = useState("all");
   const baseline = useQuery({
     queryKey: ["baseline-status"],
     queryFn: api.baselineStatus,
   });
+  const instrumentPublics = useQuery({
+    queryKey: ["instrument-public-options"],
+    queryFn: api.instrumentPublicOptions,
+  });
   const exportWorkbook = useMutation({ mutationFn: api.exportWorkbook });
+  const publicOptions = instrumentPublics.data ?? [];
 
   async function chooseExportPath() {
     const path = await save({
@@ -31,16 +45,21 @@ function ExportsPage() {
       filters: [{ name: "Excel workbook", extensions: ["xlsx"] }],
     });
     if (!path) return;
-    exportWorkbook.mutate({ path, kind: "consolidated" });
+    exportWorkbook.mutate({ path, kind: "consolidated", instrumentPublic: null });
   }
 
   async function chooseInstrumentPath() {
-    const path = await save({
-      defaultPath: "instrumentos-autoevaluacion-cna.xlsx",
-      filters: [{ name: "Excel workbook", extensions: ["xlsx"] }],
+    const path = await open({
+      directory: true,
+      multiple: false,
+      title: "Seleccione la carpeta para guardar los instrumentos por público",
     });
-    if (!path) return;
-    exportWorkbook.mutate({ path, kind: "instruments" });
+    if (typeof path !== "string") return;
+    exportWorkbook.mutate({
+      path,
+      kind: "instruments",
+      instrumentPublic: selectedPublic === "all" ? null : selectedPublic,
+    });
   }
 
   return (
@@ -87,9 +106,15 @@ function ExportsPage() {
               </p>
             </div>
             {!baseline.data?.hasOriginal ? (
-              <p className="rounded-lg border bg-background/55 p-3 text-muted-foreground">
-                Vaya al panel para fijar la linea base original antes de exportar.
-              </p>
+              <div className="rounded-lg border border-warning/30 bg-warning/10 p-3 text-warning-foreground">
+                <p className="font-medium">No hay línea base original fijada.</p>
+                <p className="mt-1 text-muted-foreground">
+                  El banco actual tiene preguntas, pero todavía no existe una copia
+                  original para comparar cambios. Por eso aquí aparecen como
+                  agregadas. Fije el consolidado original desde el panel antes de
+                  exportar con colores de trazabilidad.
+                </p>
+              </div>
             ) : null}
           </CardContent>
         </Card>
@@ -98,8 +123,8 @@ function ExportsPage() {
           <CardHeader>
             <CardTitle>Exportar Excel</CardTitle>
             <CardDescription>
-              Genera el consolidado coloreado: rojo eliminadas, azul modificadas,
-              verde agregadas.
+              Genera el consolidado coloreado y un archivo de instrumento por
+              público, cada uno con sus columnas de subpúblicos.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -107,6 +132,38 @@ function ExportsPage() {
               <Legend color="bg-destructive/25" label="Eliminadas" />
               <Legend color="bg-primary/20" label="Modificadas" />
               <Legend color="bg-secondary/20" label="Agregadas" />
+            </div>
+            <div className="grid gap-2 rounded-lg border bg-background/55 p-3">
+              <label className="text-sm font-medium">Público para instrumentos</label>
+              <Select value={selectedPublic} onValueChange={setSelectedPublic}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Seleccione el público a exportar" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todos los públicos</SelectItem>
+                  {publicOptions.map((option) => (
+                    <SelectItem key={option.public} value={option.public}>
+                      {option.label} · {option.questionCount} preguntas
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs leading-5 text-muted-foreground">
+                Cada público se exporta como un libro independiente. Sus columnas
+                corresponden a los subpúblicos detectados, por ejemplo Pregrado,
+                Maestría, Doctorado o Especializaciones.
+              </p>
+              {selectedPublic !== "all" ? (
+                <div className="flex flex-wrap gap-2">
+                  {publicOptions
+                    .find((option) => option.public === selectedPublic)
+                    ?.subpublics.map((subpublic) => (
+                      <Badge key={subpublic} variant="outline">
+                        {subpublic}
+                      </Badge>
+                    ))}
+                </div>
+              ) : null}
             </div>
             <Button
               variant="outline"
@@ -117,11 +174,15 @@ function ExportsPage() {
               Exportar consolidado
             </Button>
             <Button
-              disabled={!baseline.data?.hasOriginal || exportWorkbook.isPending}
+              disabled={
+                !baseline.data?.hasOriginal ||
+                publicOptions.length === 0 ||
+                exportWorkbook.isPending
+              }
               onClick={chooseInstrumentPath}
             >
               <Download className="size-4" />
-              Exportar instrumentos
+              Exportar instrumentos por público
             </Button>
             {exportWorkbook.data ? (
               <div className="apple-tile p-3 text-sm">

@@ -1,3 +1,4 @@
+mod audience;
 mod auth;
 mod db;
 mod domain;
@@ -17,8 +18,8 @@ use domain::{
     DeleteHistorySnapshotRequest, EditorProfile, ExportDatabasePackageRequest,
     ExportProviderReviewDocxRequest, ExportWorkbookRequest, ExportWorkbookResult, GuidelineAspect,
     HistorySnapshot, ImportWorkbookPreviewResult, ImportWorkbookRequest, ImportWorkbookResult,
-    MarkOriginalBaselineRequest, MicrosoftAccount, MicrosoftAuthConfig, MicrosoftLoginRequest,
-    MicrosoftLoginResult, NewGuidelineAspect, NewProviderLink, NewQuestion,
+    InstrumentPublicOption, MarkOriginalBaselineRequest, MicrosoftAccount, MicrosoftAuthConfig,
+    MicrosoftLoginRequest, MicrosoftLoginResult, NewGuidelineAspect, NewProviderLink, NewQuestion,
     OpenDatabasePackageRequest, OpenDatabaseRequest, ProviderLink, ProviderQuestionReview,
     ProviderQuestionReviewItem, Question, ResetDatabaseRequest, ResetDatabaseResult,
     ResetProviderQuestionReviewsRequest, ResetProviderQuestionReviewsResult,
@@ -233,6 +234,17 @@ async fn get_dashboard(state: State<'_, AppState>) -> Result<DashboardSummary, C
 async fn list_questions(state: State<'_, AppState>) -> Result<Vec<Question>, CommandError> {
     let (service, _) = state.snapshot()?;
     service.list_questions().await.map_err(Into::into)
+}
+
+#[tauri::command]
+async fn list_instrument_public_options(
+    state: State<'_, AppState>,
+) -> Result<Vec<InstrumentPublicOption>, CommandError> {
+    let (service, _) = state.snapshot()?;
+    service
+        .list_instrument_public_options()
+        .await
+        .map_err(Into::into)
 }
 
 #[tauri::command]
@@ -776,6 +788,7 @@ pub fn run() {
             sync_database_from_microsoft_graph,
             get_dashboard,
             list_questions,
+            list_instrument_public_options,
             create_question,
             update_question,
             list_guideline_aspects,

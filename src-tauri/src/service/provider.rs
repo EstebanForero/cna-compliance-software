@@ -1,7 +1,9 @@
+use std::collections::BTreeSet;
 use std::path::Path;
 
 use docx_rs::{Docx, Paragraph, Pic, Run, Shading, ShdType, Table, TableCell, TableRow, WidthType};
 
+use crate::audience::{provider_instrument_key, provider_instrument_label};
 use crate::domain::{
     ExportProviderReviewDocxRequest, NewProviderLink, ProviderLink, ProviderQuestionReview,
     ProviderQuestionReviewItem, ResetProviderQuestionReviewsRequest,
@@ -39,7 +41,7 @@ impl AutoEvaluationService {
             if review.instrument_audience.trim().is_empty() {
                 legacy_by_question.insert(review.question_id.clone(), review);
             } else {
-                let instrument = normalize_instrument_audience(&review.instrument_audience);
+                let instrument = provider_instrument_key(&review.instrument_audience);
                 by_question_and_instrument.insert((review.question_id.clone(), instrument), review);
             }
         }
@@ -49,16 +51,18 @@ impl AutoEvaluationService {
             let audiences = if question.audiences.is_empty() {
                 vec!["Sin instrumento".to_string()]
             } else {
-                normalize_instrument_audiences(&question.audiences)
+                provider_instruments_for_question(&question.audiences)
             };
-            for audience in audiences {
+            for instrument in audiences {
+                let label = provider_instrument_label(&instrument);
                 let review = by_question_and_instrument
-                    .get(&(question.id.clone(), audience.clone()))
+                    .get(&(question.id.clone(), instrument.clone()))
                     .cloned()
                     .or_else(|| legacy_by_question.get(&question.id).cloned());
                 items.push(ProviderQuestionReviewItem {
                     question: question.clone(),
-                    instrument_audience: audience,
+                    instrument_audience: instrument,
+                    instrument_label: label,
                     review,
                 });
             }
@@ -76,7 +80,7 @@ impl AutoEvaluationService {
         &self,
         mut review: SaveProviderQuestionReviewRequest,
     ) -> Result<ProviderQuestionReview, AppError> {
-        review.instrument_audience = normalize_instrument_audience(&review.instrument_audience);
+        review.instrument_audience = provider_instrument_key(&review.instrument_audience);
         if review.observation.trim().is_empty()
             && !matches!(
                 review.status,
@@ -100,7 +104,15 @@ impl AutoEvaluationService {
             ));
         }
 
-        let deleted_reviews = self.repository.reset_provider_question_reviews().await?;
+        let instrument = request
+            .instrument_audience
+            .as_deref()
+            .map(provider_instrument_key)
+            .filter(|value| !value.is_empty());
+        let deleted_reviews = self
+            .repository
+            .reset_provider_question_reviews(instrument)
+            .await?;
         Ok(ResetProviderQuestionReviewsResult { deleted_reviews })
     }
 
@@ -111,7 +123,7 @@ impl AutoEvaluationService {
         let selected_instrument = request
             .instrument_audience
             .as_deref()
-            .map(normalize_instrument_audience)
+            .map(provider_instrument_key)
             .filter(|value| !value.is_empty());
         let items = self
             .list_provider_question_review_items()
@@ -131,7 +143,13 @@ impl AutoEvaluationService {
         }
 
         let instrument_label = selected_instrument
-            .as_deref()
+            .as_ref()
+            .and_then(|instrument| {
+                items
+                    .iter()
+                    .find(|item| item.instrument_audience == *instrument)
+                    .map(|item| item.instrument_label.as_str())
+            })
             .unwrap_or("Todos los instrumentos");
         let total = items.len();
         let approved = items
@@ -386,25 +404,13 @@ fn is_supported_image_path(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
-fn normalize_instrument_audiences(values: &[String]) -> Vec<String> {
-    let mut normalized = values
-        .iter()
-        .map(|value| normalize_instrument_audience(value))
-        .filter(|value| !value.is_empty())
-        .collect::<Vec<_>>();
-    normalized.sort_by(|left, right| left.cmp(right));
-    normalized.dedup();
-    normalized
-}
-
-fn normalize_instrument_audience(value: &str) -> String {
-    value
-        .trim()
-        .replace('_', " ")
-        .trim_start_matches(|character: char| {
-            character.is_ascii_digit() || character.is_whitespace()
-        })
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
+fn provider_instruments_for_question(values: &[String]) -> Vec<String> {
+    let mut instruments = BTreeSet::new();
+    for value in values {
+        let instrument = provider_instrument_key(value);
+        if !instrument.is_empty() {
+            instruments.insert(instrument);
+        }
+    }
+    instruments.into_iter().collect()
 }

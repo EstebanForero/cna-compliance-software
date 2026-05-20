@@ -236,6 +236,14 @@ export type ExportKind = "consolidated" | "instruments";
 export interface ExportWorkbookRequest {
   path: string;
   kind: ExportKind;
+  instrumentPublic?: string | null;
+}
+
+export interface InstrumentPublicOption {
+  public: string;
+  label: string;
+  subpublics: string[];
+  questionCount: number;
 }
 
 export interface ExportWorkbookResult {
@@ -325,6 +333,7 @@ export interface ProviderQuestionReview {
 export interface ProviderQuestionReviewItem {
   question: Question;
   instrumentAudience: string;
+  instrumentLabel: string;
   review?: ProviderQuestionReview | null;
 }
 
@@ -338,6 +347,7 @@ export interface SaveProviderQuestionReviewRequest {
 
 export interface ResetProviderQuestionReviewsRequest {
   confirmationText: string;
+  instrumentAudience?: string | null;
 }
 
 export interface ResetProviderQuestionReviewsResult {

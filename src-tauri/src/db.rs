@@ -29,7 +29,10 @@ pub struct LibSqlAutoEvalRepository {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::{OriginalQuestionSnapshot, QuestionScope, QuestionStatus};
+    use crate::domain::{
+        OriginalQuestionSnapshot, ProviderQuestionReviewStatus, QuestionScope, QuestionStatus,
+        SaveProviderQuestionReviewRequest,
+    };
     use crate::repository::AutoEvalRepository;
 
     fn original_snapshot(id: &str, text: &str) -> OriginalQuestionSnapshot {
@@ -127,6 +130,45 @@ mod tests {
         assert_eq!(current.len(), 1);
         assert_eq!(current[0].id, "one");
         assert_eq!(current[0].text, "Original");
+    }
+
+    #[tokio::test]
+    async fn reset_provider_reviews_matches_legacy_subpublic_keys() {
+        let repository = LibSqlAutoEvalRepository::open_in_memory().await.unwrap();
+
+        repository
+            .save_provider_question_review(SaveProviderQuestionReviewRequest {
+                question_id: "q-1".into(),
+                instrument_audience: "Estudiantes Pregrado".into(),
+                status: ProviderQuestionReviewStatus::Correct,
+                observation: String::new(),
+                evidence_path: None,
+            })
+            .await
+            .unwrap();
+        repository
+            .save_provider_question_review(SaveProviderQuestionReviewRequest {
+                question_id: "q-2".into(),
+                instrument_audience: "Profesores Planta Pregrado".into(),
+                status: ProviderQuestionReviewStatus::Correct,
+                observation: String::new(),
+                evidence_path: None,
+            })
+            .await
+            .unwrap();
+
+        let deleted = repository
+            .reset_provider_question_reviews(Some("Estudiantes".into()))
+            .await
+            .unwrap();
+        let remaining = repository.list_provider_question_reviews().await.unwrap();
+
+        assert_eq!(deleted, 1);
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(
+            remaining[0].instrument_audience,
+            "Profesores Planta Pregrado"
+        );
     }
 }
 
@@ -598,8 +640,12 @@ impl AutoEvalRepository for LibSqlAutoEvalRepository {
         provider::save_provider_question_review(&self.connection, review).await
     }
 
-    async fn reset_provider_question_reviews(&self) -> Result<usize, AppError> {
-        provider::reset_provider_question_reviews(&self.connection).await
+    async fn reset_provider_question_reviews(
+        &self,
+        instrument_audience: Option<String>,
+    ) -> Result<usize, AppError> {
+        provider::reset_provider_question_reviews(&self.connection, instrument_audience.as_deref())
+            .await
     }
 
     async fn save_validation_run(&self, issues: &[ValidationIssue]) -> Result<(), AppError> {

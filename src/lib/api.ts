@@ -16,6 +16,7 @@ import type {
   ImportWorkbookRequest,
   ImportWorkbookPreviewResult,
   ImportWorkbookResult,
+  InstrumentPublicOption,
   MicrosoftLoginRequest,
   MicrosoftLoginResult,
   MarkOriginalBaselineRequest,
@@ -86,6 +87,8 @@ export const api = {
     invoke<BaselineStatus>("mark_original_baseline", { request }),
   exportWorkbook: (request: ExportWorkbookRequest) =>
     invoke<ExportWorkbookResult>("export_workbook", { request }),
+  instrumentPublicOptions: () =>
+    invoke<InstrumentPublicOption[]>("list_instrument_public_options"),
   providerLinks: () => invoke<ProviderLink[]>("list_provider_links"),
   recordProviderLink: (link: NewProviderLink) =>
     invoke<ProviderLink>("record_provider_link", { link }),

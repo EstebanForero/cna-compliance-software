@@ -3,6 +3,9 @@ use std::path::Path;
 
 use calamine::{open_workbook_auto, Reader};
 
+use crate::audience::audience_from_excel;
+#[cfg(test)]
+use crate::audience::normalize_audience_label;
 use crate::domain::{
     normalize_aspect_code, CnaFactorCode, NewGuidelineAspect, NewQuestion, QuestionScope,
     QuestionStatus,
@@ -178,12 +181,10 @@ fn parse_sheet(
         } else {
             code
         };
-        let audience = get(row, &columns, "tipo de publico");
-        let audience = normalize_audience_label(if audience.is_empty() {
-            get(row, &columns, "publico")
-        } else {
-            audience
-        });
+        let audience = audience_from_excel(
+            get(row, &columns, "publico"),
+            get(row, &columns, "tipo de publico"),
+        );
 
         let key = code.clone();
         let convention_code = none_if_empty(get(row, &columns, "convencion opcion de respuesta"));
@@ -200,7 +201,7 @@ fn parse_sheet(
             characteristic: join_number_name(characteristic_code, characteristic_name),
             aspect: join_number_name(aspect_code, aspect_description),
             audiences: Vec::new(),
-            justification: None,
+            justification: none_if_empty(get(row, &columns, "observaciones")),
         });
 
         if !audience.is_empty() && !entry.audiences.iter().any(|value| value == &audience) {
@@ -367,6 +368,15 @@ fn merge_question(questions: &mut HashMap<String, NewQuestion>, incoming: NewQue
             {
                 current.status = incoming.status.clone();
             }
+            if current
+                .justification
+                .as_deref()
+                .unwrap_or("")
+                .trim()
+                .is_empty()
+            {
+                current.justification = incoming.justification.clone();
+            }
         })
         .or_insert(incoming);
 }
@@ -423,19 +433,6 @@ fn none_if_empty(value: String) -> Option<String> {
     } else {
         Some(value)
     }
-}
-
-fn normalize_audience_label(value: String) -> String {
-    let trimmed = value.trim().replace('_', " ");
-    let without_prefix = trimmed
-        .trim_start_matches(|character: char| {
-            character.is_ascii_digit() || character.is_whitespace()
-        })
-        .trim();
-    without_prefix
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
 }
 
 fn question_format_from_convention(convention: Option<&str>, text: &str) -> String {
@@ -563,14 +560,18 @@ mod tests {
 
     #[test]
     fn normalizes_audience_labels_from_versioned_sheets() {
-        assert_eq!(normalize_audience_label("10Pregrado".into()), "Pregrado");
+        assert_eq!(normalize_audience_label("10Pregrado"), "Pregrado");
         assert_eq!(
-            normalize_audience_label("1Profesores_Planta".into()),
+            normalize_audience_label("1Profesores_Planta"),
             "Profesores Planta"
         );
         assert_eq!(
-            normalize_audience_label("Unidad académica".into()),
+            normalize_audience_label("Unidad académica"),
             "Unidad académica"
+        );
+        assert_eq!(
+            audience_from_excel("0Estudiantes".into(), "00Pregrado".into()),
+            "Estudiantes Pregrado"
         );
     }
 
@@ -594,6 +595,10 @@ mod tests {
             .questions
             .iter()
             .any(|question| !question.audiences.is_empty()));
+        assert!(workbook.questions.iter().any(|question| question
+            .audiences
+            .iter()
+            .any(|audience| audience == "Estudiantes Pregrado")));
         assert!(workbook
             .questions
             .iter()

@@ -18,7 +18,7 @@ impl AutoEvaluationService {
                 .get_source_document(&snapshot.source_document_id)
                 .await?
         } else {
-            None
+            self.repository.latest_source_document().await?
         };
 
         Ok(build_baseline_status(current, snapshots, source_document))
@@ -146,12 +146,20 @@ pub(super) fn diff_questions(
         .iter()
         .map(|snapshot| (snapshot.code.as_str(), snapshot))
         .collect::<std::collections::HashMap<_, _>>();
+    let current_by_code = questions
+        .iter()
+        .map(|question| (question.code.as_str(), question))
+        .collect::<std::collections::HashMap<_, _>>();
 
-    questions
+    let mut diffed = questions
         .iter()
         .map(|question| {
             let kind = if question.status == QuestionStatus::Delete {
                 QuestionDiffKind::Removed
+            } else if question.status == QuestionStatus::Modify {
+                QuestionDiffKind::Modified
+            } else if question.status == QuestionStatus::Add {
+                QuestionDiffKind::Added
             } else if let Some(snapshot) = original_by_code.get(question.code.as_str()) {
                 if snapshot.content_hash == question_hash(question) {
                     QuestionDiffKind::Unchanged
@@ -163,7 +171,33 @@ pub(super) fn diff_questions(
             };
             (question.clone(), kind)
         })
-        .collect()
+        .collect::<Vec<_>>();
+
+    diffed.extend(
+        snapshots
+            .iter()
+            .filter(|snapshot| !current_by_code.contains_key(snapshot.code.as_str()))
+            .map(|snapshot| (question_from_snapshot(snapshot), QuestionDiffKind::Removed)),
+    );
+    diffed
+}
+
+fn question_from_snapshot(snapshot: &OriginalQuestionSnapshot) -> Question {
+    Question {
+        id: snapshot.question_id.clone(),
+        code: snapshot.code.clone(),
+        text: snapshot.text.clone(),
+        scope: snapshot.scope.clone(),
+        format: snapshot.format.clone(),
+        convention_code: snapshot.convention_code.clone(),
+        status: QuestionStatus::Delete,
+        factor: snapshot.factor.clone(),
+        characteristic: snapshot.characteristic.clone(),
+        aspect: snapshot.aspect.clone(),
+        audiences: snapshot.audiences.clone(),
+        justification: None,
+        updated_at: snapshot.marked_at,
+    }
 }
 
 pub(super) fn question_hash(question: &Question) -> String {

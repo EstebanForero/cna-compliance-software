@@ -37,6 +37,7 @@ const resetConfirmation = "REINICIAR REVISION";
 type ReviewFilter = "pending" | "all";
 type InstrumentStats = {
   instrument: string;
+  label: string;
   total: number;
   pending: number;
   approved: number;
@@ -87,9 +88,12 @@ function ProviderPage() {
   });
   const exportDocx = useMutation({ mutationFn: api.exportProviderReviewDocx });
   const instruments = useMemo(() => {
-    const values = (items.data ?? []).map((item) => item.instrumentAudience);
-    return Array.from(new Set(values)).sort((left, right) =>
-      left.localeCompare(right, "es", { sensitivity: "base" }),
+    const values = new Map<string, string>();
+    for (const item of items.data ?? []) {
+      values.set(item.instrumentAudience, item.instrumentLabel);
+    }
+    return Array.from(values, ([instrument, label]) => ({ instrument, label })).sort(
+      (left, right) => left.label.localeCompare(right.label, "es", { sensitivity: "base" }),
     );
   }, [items.data]);
   const instrumentStats = useMemo(() => {
@@ -99,6 +103,7 @@ function ProviderPage() {
         stats.get(item.instrumentAudience) ??
         {
           instrument: item.instrumentAudience,
+          label: item.instrumentLabel,
           total: 0,
           pending: 0,
           approved: 0,
@@ -112,17 +117,21 @@ function ProviderPage() {
       stats.set(item.instrumentAudience, current);
     }
     return Array.from(stats.values()).sort((left, right) =>
-      left.instrument.localeCompare(right.instrument, "es", { sensitivity: "base" }),
+      left.label.localeCompare(right.label, "es", { sensitivity: "base" }),
     );
   }, [items.data]);
 
   useEffect(() => {
     if (!selectedInstrument && instruments.length > 0) {
-      setSelectedInstrument(instruments[0]);
+      setSelectedInstrument(instruments[0].instrument);
       return;
     }
-    if (selectedInstrument && instruments.length > 0 && !instruments.includes(selectedInstrument)) {
-      setSelectedInstrument(instruments[0]);
+    if (
+      selectedInstrument &&
+      instruments.length > 0 &&
+      !instruments.some((instrument) => instrument.instrument === selectedInstrument)
+    ) {
+      setSelectedInstrument(instruments[0].instrument);
     }
   }, [instruments, selectedInstrument]);
 
@@ -139,6 +148,7 @@ function ProviderPage() {
         item.question.factor,
         item.question.aspect,
         item.instrumentAudience,
+        item.instrumentLabel,
       ]
         .join(" ")
         .toLowerCase()
@@ -217,7 +227,7 @@ function ProviderPage() {
   async function chooseDocxPath() {
     const path = await save({
       defaultPath: selectedInstrument
-        ? `revision-proveedor-${selectedInstrument}.docx`
+        ? `revision-proveedor-${instrumentFileLabel(selectedInstrument, instruments)}.docx`
         : "revision-proveedor.docx",
       filters: [{ name: "Word document", extensions: ["docx"] }],
     });
@@ -256,7 +266,7 @@ function ProviderPage() {
             >
               <div className="flex items-start justify-between gap-3">
                 <p className="min-w-0 break-words text-sm font-semibold leading-5">
-                  {instrument.instrument}
+                  {instrument.label}
                 </p>
                 <Badge variant={instrument.issues ? "warning" : "secondary"}>{progress}%</Badge>
               </div>
@@ -279,8 +289,9 @@ function ProviderPage() {
             <div>
               <CardTitle>Checklist de preguntas</CardTitle>
               <CardDescription>
-                {selectedInstrument || "Seleccione un instrumento"} · {pendingCount} pendientes ·{" "}
-                {reviewedCount} revisadas
+                {instrumentDisplayLabel(selectedInstrument, instruments) ||
+                  "Seleccione un instrumento"}{" "}
+                · {pendingCount} pendientes · {reviewedCount} revisadas
               </CardDescription>
             </div>
             <div className="flex w-full flex-col gap-2 md:w-auto md:flex-row md:items-center">
@@ -290,8 +301,8 @@ function ProviderPage() {
                 </SelectTrigger>
                 <SelectContent>
                   {instruments.map((instrument) => (
-                    <SelectItem key={instrument} value={instrument}>
-                      {instrument}
+                    <SelectItem key={instrument.instrument} value={instrument.instrument}>
+                      {instrument.label}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -334,8 +345,8 @@ function ProviderPage() {
                   <DialogHeader>
                     <DialogTitle>Reiniciar revision del proveedor</DialogTitle>
                     <DialogDescription>
-                      Esto elimina las marcas, observaciones y rutas de evidencia de todas las
-                      preguntas revisadas. No elimina las preguntas ni los archivos adjuntos.
+                      Esto elimina las marcas, observaciones y rutas de evidencia solo del
+                      instrumento seleccionado. No elimina las preguntas ni los archivos adjuntos.
                     </DialogDescription>
                   </DialogHeader>
                   <div className="space-y-3">
@@ -355,11 +366,14 @@ function ProviderPage() {
                       <Button
                         variant="destructive"
                         type="button"
-                  disabled={
+                        disabled={
                           resetInput.trim() !== resetConfirmation || resetReviews.isPending
                         }
                         onClick={() =>
-                          resetReviews.mutate({ confirmationText: resetInput })
+                          resetReviews.mutate({
+                            confirmationText: resetInput,
+                            instrumentAudience: selectedInstrument || null,
+                          })
                         }
                       >
                         Reiniciar revision
@@ -412,7 +426,7 @@ function ProviderPage() {
             <CardTitle>{selected ? "Marcar pregunta" : "Documento de revision"}</CardTitle>
             <CardDescription>
               {selected
-                ? `${selected.instrumentAudience} · ${selected.question.code}`
+                ? `${selected.instrumentLabel} · ${selected.question.code}`
                 : "Exporta el estado completo a Word."}
             </CardDescription>
           </CardHeader>
@@ -508,4 +522,23 @@ function label(status: ProviderQuestionReviewStatus) {
     needsModification: "Modificar",
     missing: "No aparece",
   }[status];
+}
+
+function instrumentDisplayLabel(
+  instrument: string,
+  instruments: Array<{ instrument: string; label: string }>,
+) {
+  return instruments.find((option) => option.instrument === instrument)?.label ?? instrument;
+}
+
+function instrumentFileLabel(
+  instrument: string,
+  instruments: Array<{ instrument: string; label: string }>,
+) {
+  return instrumentDisplayLabel(instrument, instruments)
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
 }

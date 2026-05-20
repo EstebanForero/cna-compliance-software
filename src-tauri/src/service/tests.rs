@@ -11,11 +11,12 @@ use crate::db::LibSqlAutoEvalRepository;
 use crate::domain::{
     CycleStatus, ExportKind, ExportWorkbookRequest, GuidelineAspect, ImportWorkbookRequest,
     MarkOriginalBaselineRequest, NewProviderLink, NewQuestion, NewSourceDocument,
-    ProviderQuestionReview, ProviderQuestionReviewStatus, QuestionScope,
-    ResetProviderQuestionReviewsRequest, SurveyCycle,
+    OriginalQuestionSnapshot, ProviderQuestionReview, ProviderQuestionReviewStatus,
+    QuestionDiffKind, QuestionScope, ResetProviderQuestionReviewsRequest, SurveyCycle,
 };
 use crate::importer::parse_questions_workbook;
 use crate::repository::{AutoEvalRepository, MockAutoEvalRepository};
+use crate::service::baseline::{diff_questions, question_hash};
 
 fn cycle() -> SurveyCycle {
     SurveyCycle {
@@ -66,6 +67,59 @@ fn new_question_with_code_and_status(code: &str, status: QuestionStatus) -> NewQ
     let mut question = new_question_from(&question(status, Some("A".into())));
     question.code = code.into();
     question
+}
+
+fn snapshot_from_question(question: &Question) -> OriginalQuestionSnapshot {
+    OriginalQuestionSnapshot {
+        id: format!("snapshot-{}", question.code),
+        question_id: question.id.clone(),
+        source_document_id: "source-1".into(),
+        code: question.code.clone(),
+        text: question.text.clone(),
+        scope: question.scope.clone(),
+        format: question.format.clone(),
+        convention_code: question.convention_code.clone(),
+        status: question.status.clone(),
+        factor: question.factor.clone(),
+        characteristic: question.characteristic.clone(),
+        aspect: question.aspect.clone(),
+        audiences: question.audiences.clone(),
+        content_hash: question_hash(question),
+        marked_by: "Test Editor".into(),
+        marked_at: Utc::now(),
+    }
+}
+
+#[test]
+fn diff_questions_keeps_status_and_missing_originals_for_exports() {
+    let mut original_removed = question(QuestionStatus::Keep, Some("A".into()));
+    original_removed.id = "removed-id".into();
+    original_removed.code = "REM-1".into();
+    original_removed.audiences = vec!["Estudiantes Pregrado".into()];
+
+    let mut explicit_modify = question(QuestionStatus::Modify, Some("B".into()));
+    explicit_modify.id = "modify-id".into();
+    explicit_modify.code = "MOD-1".into();
+    explicit_modify.audiences = vec!["Estudiantes Pregrado".into()];
+    let mut modify_snapshot = explicit_modify.clone();
+    modify_snapshot.status = QuestionStatus::Keep;
+
+    let diffed = diff_questions(
+        &[explicit_modify.clone()],
+        &[
+            snapshot_from_question(&original_removed),
+            snapshot_from_question(&modify_snapshot),
+        ],
+    );
+
+    assert!(diffed.iter().any(|(question, kind)| {
+        question.code == "MOD-1" && matches!(kind, QuestionDiffKind::Modified)
+    }));
+    assert!(diffed.iter().any(|(question, kind)| {
+        question.code == "REM-1"
+            && question.status == QuestionStatus::Delete
+            && matches!(kind, QuestionDiffKind::Removed)
+    }));
 }
 
 #[tokio::test]
@@ -189,6 +243,51 @@ async fn update_question_noops_when_content_did_not_change() {
 }
 
 #[tokio::test]
+async fn update_question_allows_marking_kept_question_for_deletion() {
+    let existing = question(QuestionStatus::Keep, Some("A".into()));
+    let mut update = new_question_from(&existing);
+    update.status = QuestionStatus::Delete;
+    let mut repository = MockAutoEvalRepository::new();
+    repository
+        .expect_list_questions()
+        .returning(move || Ok(vec![existing.clone()]));
+    repository
+        .expect_create_history_snapshot()
+        .returning(|_, _| {
+            Ok(crate::domain::HistorySnapshot {
+                id: Uuid::new_v4().to_string(),
+                summary: "snapshot".into(),
+                editor_name: "Editor".into(),
+                snapshot_kind: "auto".into(),
+                created_at: Utc::now(),
+            })
+        });
+    repository
+        .expect_update_question()
+        .withf(|id, candidate| id == "q-1" && candidate.status == QuestionStatus::Delete)
+        .returning(|_, candidate| {
+            Ok(question(
+                candidate.status.clone(),
+                candidate.convention_code.clone(),
+            ))
+        });
+
+    let service = AutoEvaluationService::new(Arc::new(repository));
+    let updated = service
+        .update_question(
+            UpdateQuestionRequest {
+                question_id: "q-1".into(),
+                question: update,
+            },
+            "Editor",
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(updated.status, QuestionStatus::Delete);
+}
+
+#[tokio::test]
 async fn provider_links_must_use_https() {
     let mut repository = MockAutoEvalRepository::new();
     repository
@@ -236,12 +335,68 @@ async fn provider_review_items_are_split_by_instrument_audience() {
 
     assert_eq!(items.len(), 2);
     assert_eq!(items[0].instrument_audience, "Estudiantes");
+    assert_eq!(items[0].instrument_label, "Estudiantes");
     assert!(items[0].review.is_none());
     assert_eq!(items[1].instrument_audience, "Profesores");
+    assert_eq!(items[1].instrument_label, "Profesores");
     assert_eq!(
         items[1].review.as_ref().map(|review| &review.status),
         Some(&ProviderQuestionReviewStatus::Missing)
     );
+}
+
+#[tokio::test]
+async fn provider_review_groups_subpublics_under_exported_instrument() {
+    let public_question = Question {
+        id: "q-public".into(),
+        code: "PUB-1".into(),
+        audiences: vec!["Estudiantes".into()],
+        ..question(QuestionStatus::Keep, Some("A".into()))
+    };
+    let subpublic_question = Question {
+        id: "q-subpublic".into(),
+        code: "SUB-1".into(),
+        audiences: vec![
+            "Estudiantes Pregrado".into(),
+            "Estudiantes Maestrías virtuales".into(),
+        ],
+        ..question(QuestionStatus::Keep, Some("A".into()))
+    };
+    let mut repository = MockAutoEvalRepository::new();
+    repository
+        .expect_list_questions()
+        .returning(move || Ok(vec![public_question.clone(), subpublic_question.clone()]));
+    repository
+        .expect_list_provider_question_reviews()
+        .returning(|| Ok(vec![]));
+
+    let service = AutoEvaluationService::new(Arc::new(repository));
+    let items = service.list_provider_question_review_items().await.unwrap();
+    let public_items = items
+        .iter()
+        .filter(|item| item.question.id == "q-public")
+        .map(|item| {
+            (
+                item.instrument_audience.as_str(),
+                item.instrument_label.as_str(),
+            )
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(public_items, vec![("Estudiantes", "Estudiantes")]);
+
+    let subpublic_items = items
+        .iter()
+        .filter(|item| item.question.id == "q-subpublic")
+        .map(|item| {
+            (
+                item.instrument_audience.as_str(),
+                item.instrument_label.as_str(),
+            )
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(subpublic_items, vec![("Estudiantes", "Estudiantes")]);
 }
 
 #[tokio::test]
@@ -253,6 +408,7 @@ async fn reset_provider_reviews_requires_explicit_confirmation() {
     let result = service
         .reset_provider_question_reviews(ResetProviderQuestionReviewsRequest {
             confirmation_text: "reiniciar".into(),
+            instrument_audience: Some("Estudiantes Pregrado".into()),
         })
         .await;
 
@@ -264,12 +420,14 @@ async fn reset_provider_reviews_returns_deleted_count() {
     let mut repository = MockAutoEvalRepository::new();
     repository
         .expect_reset_provider_question_reviews()
-        .returning(|| Ok(7));
+        .withf(|instrument| instrument.as_deref() == Some("Estudiantes"))
+        .returning(|_| Ok(7));
 
     let service = AutoEvaluationService::new(Arc::new(repository));
     let result = service
         .reset_provider_question_reviews(ResetProviderQuestionReviewsRequest {
             confirmation_text: "REINICIAR REVISION".into(),
+            instrument_audience: Some("0Estudiantes 00Pregrado".into()),
         })
         .await
         .unwrap();
@@ -332,6 +490,7 @@ async fn imports_and_exports_consolidated_workbook_without_losing_structure() {
         .export_workbook(ExportWorkbookRequest {
             path: export_path.to_string_lossy().into_owned(),
             kind: ExportKind::Consolidated,
+            instrument_public: None,
         })
         .await
         .unwrap();
@@ -359,42 +518,89 @@ async fn imports_and_exports_consolidated_workbook_without_losing_structure() {
     );
     assert!(!exported.guideline_aspects.is_empty());
 
-    let instrument_path = std::env::temp_dir().join(format!(
-        "autoevaluacion-instruments-{}.xlsx",
-        Uuid::new_v4()
-    ));
+    let instrument_options = service.list_instrument_public_options().await.unwrap();
+    let estudiantes = instrument_options
+        .iter()
+        .find(|option| option.public == "Estudiantes")
+        .unwrap();
+    assert_eq!(estudiantes.label, "Estudiantes");
+    assert!(estudiantes
+        .subpublics
+        .iter()
+        .any(|value| value == "Estudiantes Maestría Virtual"));
+    let profesores = instrument_options
+        .iter()
+        .find(|option| option.public == "Profesores Planta")
+        .unwrap();
+    assert_eq!(profesores.label, "Profesores de planta");
+    assert!(profesores
+        .subpublics
+        .iter()
+        .any(|value| value == "Profesores Pregrado"));
+
+    let all_instruments_path =
+        std::env::temp_dir().join(format!("autoevaluacion-all-instruments-{}", Uuid::new_v4()));
+    service
+        .export_workbook(ExportWorkbookRequest {
+            path: all_instruments_path.to_string_lossy().into_owned(),
+            kind: ExportKind::Instruments,
+            instrument_public: None,
+        })
+        .await
+        .unwrap();
+    assert!(all_instruments_path
+        .join("instrumento-estudiantes.xlsx")
+        .exists());
+    assert!(all_instruments_path
+        .join("instrumento-profesores-planta.xlsx")
+        .exists());
+
+    let instrument_path =
+        std::env::temp_dir().join(format!("autoevaluacion-instruments-{}", Uuid::new_v4()));
     service
         .export_workbook(ExportWorkbookRequest {
             path: instrument_path.to_string_lossy().into_owned(),
             kind: ExportKind::Instruments,
+            instrument_public: Some("Estudiantes".into()),
         })
         .await
         .unwrap();
 
-    let mut workbook = open_workbook_auto(&instrument_path).unwrap();
+    let estudiantes_path = instrument_path.join("instrumento-estudiantes.xlsx");
+    let profesores_path = instrument_path.join("instrumento-profesores-planta.xlsx");
+    assert!(estudiantes_path.exists());
+    assert!(!profesores_path.exists());
+
+    let mut workbook = open_workbook_auto(&estudiantes_path).unwrap();
     let sheet_names = workbook.sheet_names().to_vec();
     assert!(sheet_names.contains(&"Por lineamiento".to_string()));
     assert!(sheet_names.contains(&"Por orden".to_string()));
     assert!(sheet_names.contains(&"Convención".to_string()));
     let order = workbook.worksheet_range("Por orden").unwrap();
     assert!(order
-        .get_value((0, 0))
-        .map(|value| value.to_string().contains("INSTRUMENTO POR ORDEN"))
+        .get_value((1, 0))
+        .map(|value| value
+            .to_string()
+            .contains("INSTRUMENTO ESTUDIANTES POR ORDEN"))
         .unwrap_or(false));
     assert_eq!(
-        order.get_value((1, 0)).map(|value| value.to_string()),
+        order.get_value((2, 0)).map(|value| value.to_string()),
         Some("# Pregunta".into())
     );
-    assert!(order
-        .rows()
-        .nth(1)
-        .unwrap()
+    let header_values = (0..16)
+        .filter_map(|column| order.get_value((2, column)))
+        .map(|value| value.to_string())
+        .collect::<Vec<_>>();
+    assert!(header_values
         .iter()
-        .skip(2)
-        .any(|value| !value.to_string().trim().is_empty()));
+        .any(|value| value == "Estudiantes Pregrado"));
+    assert!(!header_values
+        .iter()
+        .any(|value| value.starts_with("Profesores Planta")));
 
     let _ = std::fs::remove_file(export_path);
-    let _ = std::fs::remove_file(instrument_path);
+    let _ = std::fs::remove_dir_all(all_instruments_path);
+    let _ = std::fs::remove_dir_all(instrument_path);
 }
 
 #[tokio::test]

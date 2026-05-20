@@ -140,14 +140,7 @@ impl AutoEvaluationService {
             return Ok(existing);
         }
 
-        if matches!(
-            existing.status,
-            QuestionStatus::Keep | QuestionStatus::Modify
-        ) {
-            question.status = QuestionStatus::Modify;
-        } else {
-            question.status = existing.status;
-        }
+        question.status = next_question_status(&existing.status, &question.status);
 
         self.repository
             .create_history_snapshot("Before updating question", editor_name)
@@ -426,11 +419,22 @@ fn question_content_changed(existing: &Question, question: &NewQuestion) -> bool
         || existing.scope != question.scope
         || existing.format != question.format
         || existing.convention_code != question.convention_code
+        || existing.status != question.status
         || existing.factor != question.factor
         || existing.characteristic != question.characteristic
         || existing.aspect != question.aspect
         || existing.audiences != question.audiences
         || existing.justification != question.justification
+}
+
+fn next_question_status(existing: &QuestionStatus, requested: &QuestionStatus) -> QuestionStatus {
+    match (existing, requested) {
+        (_, QuestionStatus::Delete) => QuestionStatus::Delete,
+        (QuestionStatus::Add, _) => QuestionStatus::Add,
+        (QuestionStatus::Delete, _) => QuestionStatus::Delete,
+        (QuestionStatus::Keep | QuestionStatus::Modify, QuestionStatus::Add) => QuestionStatus::Add,
+        (QuestionStatus::Keep | QuestionStatus::Modify, _) => QuestionStatus::Modify,
+    }
 }
 
 fn normalize_guideline_aspect(aspect: &mut NewGuidelineAspect) -> Result<(), AppError> {

@@ -83,7 +83,7 @@ pub fn normalize_header(value: &str) -> String {
 }
 
 fn alias_columns(columns: HashMap<String, usize>) -> HashMap<String, usize> {
-    let aliases: [(&str, &[&str]); 13] = [
+    let aliases: [(&str, &[&str]); 14] = [
         ("n factor", &["n factor", "factor"]),
         ("descripcion factor", &["descripcion factor"]),
         ("n caracteristica", &["n caracteristica"]),
@@ -100,6 +100,7 @@ fn alias_columns(columns: HashMap<String, usize>) -> HashMap<String, usize> {
         ("pregunta", &["pregunta"]),
         ("publico", &["publico"]),
         ("tipo de publico", &["tipo de publico"]),
+        ("observaciones", &["observaciones"]),
     ];
 
     let mut mapped = HashMap::new();

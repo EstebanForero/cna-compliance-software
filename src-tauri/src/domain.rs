@@ -416,6 +416,16 @@ pub enum ExportKind {
 pub struct ExportWorkbookRequest {
     pub path: String,
     pub kind: ExportKind,
+    pub instrument_public: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct InstrumentPublicOption {
+    pub public: String,
+    pub label: String,
+    pub subpublics: Vec<String>,
+    pub question_count: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -689,6 +699,7 @@ pub struct ProviderQuestionReview {
 pub struct ProviderQuestionReviewItem {
     pub question: Question,
     pub instrument_audience: String,
+    pub instrument_label: String,
     pub review: Option<ProviderQuestionReview>,
 }
 
@@ -706,6 +717,7 @@ pub struct SaveProviderQuestionReviewRequest {
 #[serde(rename_all = "camelCase")]
 pub struct ResetProviderQuestionReviewsRequest {
     pub confirmation_text: String,
+    pub instrument_audience: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

@@ -83,7 +83,10 @@ pub trait AutoEvalRepository: Send + Sync {
         &self,
         review: SaveProviderQuestionReviewRequest,
     ) -> Result<ProviderQuestionReview, AppError>;
-    async fn reset_provider_question_reviews(&self) -> Result<usize, AppError>;
+    async fn reset_provider_question_reviews(
+        &self,
+        instrument_audience: Option<String>,
+    ) -> Result<usize, AppError>;
     async fn save_validation_run(&self, issues: &[ValidationIssue]) -> Result<(), AppError>;
     async fn reset_database_data(&self) -> Result<(), AppError>;
 }
