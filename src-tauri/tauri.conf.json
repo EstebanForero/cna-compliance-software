@@ -26,7 +26,7 @@
   "bundle": {
     "active": true,
     "targets": ["deb", "rpm", "appimage", "msi", "nsis"],
-    "category": "Office",
+    "category": "Education",
     "shortDescription": "Autoevaluacion CNA",
     "longDescription": "Aplicacion local para gestionar lineamientos, preguntas, instrumentos, revision de proveedor e historiales de autoevaluacion CNA.",
     "icon": [
@@ -45,6 +45,9 @@
       }
     ],
     "windows": {
+      "nsis": {
+        "installMode": "currentUser"
+      },
       "webviewInstallMode": {
         "type": "downloadBootstrapper"
       }
