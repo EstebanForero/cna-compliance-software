@@ -3,7 +3,7 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::domain::{
-    BaselineStatus, MarkOriginalBaselineRequest, NewQuestion, OriginalQuestionSnapshot, Question,
+    BaselineStatus, MarkOriginalBaselineRequest, OriginalQuestionSnapshot, Question,
     QuestionDiffKind, QuestionStatus, SourceDocument,
 };
 use crate::error::AppError;
@@ -70,16 +70,8 @@ impl AutoEvaluationService {
         editor_name: &str,
         history_summary: &str,
     ) -> Result<BaselineStatus, AppError> {
-        let baseline_questions = questions
-            .into_iter()
-            .map(|mut question| {
-                question.status = QuestionStatus::Keep;
-                question
-            })
-            .collect::<Vec<_>>();
-
         let marked_at = Utc::now();
-        let snapshots = baseline_questions
+        let snapshots = questions
             .iter()
             .map(|question| OriginalQuestionSnapshot {
                 id: Uuid::new_v4().to_string(),
@@ -105,19 +97,11 @@ impl AutoEvaluationService {
             .replace_original_snapshots(&source_document.id, snapshots.clone())
             .await?;
         self.repository
-            .upsert_questions(
-                baseline_questions
-                    .iter()
-                    .map(question_to_new_question)
-                    .collect(),
-            )
-            .await?;
-        self.repository
             .create_baseline_history_snapshot(history_summary, editor_name)
             .await?;
 
         Ok(build_baseline_status(
-            baseline_questions,
+            questions,
             snapshots,
             Some(source_document),
         ))
@@ -206,20 +190,4 @@ pub(super) fn question_hash(question: &Question) -> String {
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect()
-}
-
-fn question_to_new_question(question: &Question) -> NewQuestion {
-    NewQuestion {
-        code: question.code.clone(),
-        text: question.text.clone(),
-        scope: question.scope.clone(),
-        format: question.format.clone(),
-        convention_code: question.convention_code.clone(),
-        status: question.status.clone(),
-        factor: question.factor.clone(),
-        characteristic: question.characteristic.clone(),
-        aspect: question.aspect.clone(),
-        audiences: question.audiences.clone(),
-        justification: question.justification.clone(),
-    }
 }

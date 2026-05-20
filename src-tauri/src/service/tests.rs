@@ -10,8 +10,9 @@ use super::*;
 use crate::db::LibSqlAutoEvalRepository;
 use crate::domain::{
     CycleStatus, ExportKind, ExportWorkbookRequest, GuidelineAspect, ImportWorkbookRequest,
-    MarkOriginalBaselineRequest, NewProviderLink, NewQuestion, ProviderQuestionReview,
-    ProviderQuestionReviewStatus, QuestionScope, ResetProviderQuestionReviewsRequest, SurveyCycle,
+    MarkOriginalBaselineRequest, NewProviderLink, NewQuestion, NewSourceDocument,
+    ProviderQuestionReview, ProviderQuestionReviewStatus, QuestionScope,
+    ResetProviderQuestionReviewsRequest, SurveyCycle,
 };
 use crate::importer::parse_questions_workbook;
 use crate::repository::{AutoEvalRepository, MockAutoEvalRepository};
@@ -59,6 +60,12 @@ fn new_question_from(question: &Question) -> NewQuestion {
         audiences: question.audiences.clone(),
         justification: question.justification.clone(),
     }
+}
+
+fn new_question_with_code_and_status(code: &str, status: QuestionStatus) -> NewQuestion {
+    let mut question = new_question_from(&question(status, Some("A".into())));
+    question.code = code.into();
+    question
 }
 
 #[tokio::test]
@@ -297,9 +304,6 @@ async fn imports_and_exports_consolidated_workbook_without_losing_structure() {
     let fixation_history = repository.list_history_snapshots().await.unwrap();
     assert_eq!(imported_questions.len(), import_result.imported_questions);
     assert_eq!(initial_original.len(), imported_questions.len());
-    assert!(imported_questions
-        .iter()
-        .all(|question| question.status == QuestionStatus::Keep));
     assert!(fixation_history.iter().any(|snapshot| {
         snapshot.snapshot_kind == "baseline"
             && snapshot.summary == "Fijacion inicial desde consolidado"
@@ -391,6 +395,65 @@ async fn imports_and_exports_consolidated_workbook_without_losing_structure() {
 
     let _ = std::fs::remove_file(export_path);
     let _ = std::fs::remove_file(instrument_path);
+}
+
+#[tokio::test]
+async fn marking_original_baseline_preserves_current_question_statuses() {
+    let repository = Arc::new(LibSqlAutoEvalRepository::open_in_memory().await.unwrap());
+    let service = AutoEvaluationService::new(repository.clone());
+    let source_document = NewSourceDocument {
+        id: "source-1".into(),
+        file_name: "consolidado.xlsx".into(),
+        path: "consolidado.xlsx".into(),
+        document_type: "questions_consolidated".into(),
+        imported_rows: 3,
+        skipped_rows: 0,
+    };
+    repository
+        .save_source_document(source_document)
+        .await
+        .unwrap();
+    repository
+        .upsert_questions(vec![
+            new_question_with_code_and_status("EST-001", QuestionStatus::Modify),
+            new_question_with_code_and_status("EST-002", QuestionStatus::Add),
+            new_question_with_code_and_status("EST-003", QuestionStatus::Delete),
+        ])
+        .await
+        .unwrap();
+
+    let before = repository.list_questions().await.unwrap();
+    let source_document = repository
+        .get_source_document("source-1")
+        .await
+        .unwrap()
+        .unwrap();
+
+    service
+        .mark_questions_as_original_baseline(
+            before,
+            source_document,
+            "Test Editor",
+            "Fijacion de original",
+        )
+        .await
+        .unwrap();
+
+    let questions = repository.list_questions().await.unwrap();
+    let statuses = questions
+        .iter()
+        .map(|question| (question.code.as_str(), &question.status))
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        statuses,
+        vec![
+            ("EST-001", &QuestionStatus::Modify),
+            ("EST-002", &QuestionStatus::Add),
+            ("EST-003", &QuestionStatus::Delete),
+        ]
+    );
+    assert_eq!(repository.list_original_snapshots().await.unwrap().len(), 3);
 }
 
 fn workspace() -> WorkspaceStatus {
