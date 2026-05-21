@@ -312,6 +312,9 @@ pub struct NewGuidelineAspect {
 pub struct ImportWorkbookRequest {
     pub path: String,
     pub cycle_name: Option<String>,
+    pub acknowledge_existing_data: Option<bool>,
+    pub acknowledge_backup: Option<bool>,
+    pub replacement_confirmation: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

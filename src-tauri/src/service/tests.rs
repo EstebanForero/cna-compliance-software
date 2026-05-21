@@ -172,6 +172,35 @@ async fn create_question_rejects_missing_audience_before_repository_call() {
 }
 
 #[tokio::test]
+async fn import_workbook_requires_explicit_confirmation_when_database_has_data() {
+    let existing = question(QuestionStatus::Keep, Some("A".into()));
+    let mut repository = MockAutoEvalRepository::new();
+    repository
+        .expect_list_questions()
+        .return_once(move || Ok(vec![existing]));
+    repository
+        .expect_list_guideline_aspects()
+        .return_once(|| Ok(vec![]));
+
+    let service = AutoEvaluationService::new(Arc::new(repository));
+    let result = service
+        .import_workbook(
+            ImportWorkbookRequest {
+                path: "/tmp/no-debe-leerse.xlsx".into(),
+                cycle_name: Some("Ciclo protegido".into()),
+                acknowledge_existing_data: Some(true),
+                acknowledge_backup: Some(false),
+                replacement_confirmation: Some("REEMPLAZAR CONSOLIDADO".into()),
+            },
+            "Test Editor",
+        )
+        .await;
+
+    let error = result.unwrap_err().to_string();
+    assert!(error.contains("REEMPLAZAR CONSOLIDADO"));
+}
+
+#[tokio::test]
 async fn update_question_marks_kept_question_as_modify_when_content_changes() {
     let existing = question(QuestionStatus::Keep, Some("A".into()));
     let expected_updated_at = existing.updated_at;
@@ -480,6 +509,9 @@ async fn imports_and_exports_consolidated_workbook_without_losing_structure() {
             ImportWorkbookRequest {
                 path: input_path.to_string_lossy().into_owned(),
                 cycle_name: Some("Roundtrip".into()),
+                acknowledge_existing_data: None,
+                acknowledge_backup: None,
+                replacement_confirmation: None,
             },
             "Test Editor",
         )
@@ -700,6 +732,9 @@ async fn imported_consolidated_exports_match_independent_sample_instruments() {
             ImportWorkbookRequest {
                 path: input_path.to_string_lossy().into_owned(),
                 cycle_name: Some("Instrument regression".into()),
+                acknowledge_existing_data: None,
+                acknowledge_backup: None,
+                replacement_confirmation: None,
             },
             "Test Editor",
         )

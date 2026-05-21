@@ -10,7 +10,7 @@ import {
   FileUp,
   Layers3,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { BaselineCard } from "@/features/dashboard/BaselineCard";
 import { EmptyWorkspaceImportDialog } from "@/features/dashboard/EmptyWorkspaceImportDialog";
@@ -36,6 +36,7 @@ function DashboardPage() {
   const [confirmationText, setConfirmationText] = useState("");
   const [acknowledgeReplacement, setAcknowledgeReplacement] = useState(false);
   const [acknowledgeBackup, setAcknowledgeBackup] = useState(false);
+  const [checkedTursoBeforeImport, setCheckedTursoBeforeImport] = useState(false);
   const [emptyImportPromptOpen, setEmptyImportPromptOpen] = useState(() => {
     if (typeof window === "undefined") return false;
     return localStorage.getItem("autoeval.skipEmptyImportPrompt") !== "true";
@@ -47,6 +48,19 @@ function DashboardPage() {
   const baseline = useQuery({
     queryKey: ["baseline-status"],
     queryFn: api.baselineStatus,
+  });
+  const refreshTurso = useMutation({
+    mutationFn: api.refreshTursoWorkspace,
+    onSuccess: async (workspace) => {
+      await queryClient.invalidateQueries({ queryKey: ["workspace"] });
+      await queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+      if (workspace.hasQuestions) {
+        setEmptyImportPromptOpen(false);
+        await queryClient.invalidateQueries({ queryKey: ["questions"] });
+        await queryClient.invalidateQueries({ queryKey: ["guideline-aspects"] });
+      }
+    },
+    onSettled: () => setCheckedTursoBeforeImport(true),
   });
   const markBaseline = useMutation({
     mutationFn: api.markOriginalBaseline,
@@ -86,6 +100,17 @@ function DashboardPage() {
     setEmptyImportPromptOpen(false);
   }
 
+  useEffect(() => {
+    if (
+      dashboard.data &&
+      !dashboard.data.workspace.hasQuestions &&
+      !checkedTursoBeforeImport &&
+      !refreshTurso.isPending
+    ) {
+      refreshTurso.mutate();
+    }
+  }, [checkedTursoBeforeImport, dashboard.data, refreshTurso]);
+
   if (dashboard.isLoading) {
     return <div className="text-sm text-muted-foreground">Cargando panel...</div>;
   }
@@ -99,6 +124,22 @@ function DashboardPage() {
   }
 
   const data = dashboard.data;
+  if (!data.workspace.hasQuestions && !checkedTursoBeforeImport) {
+    return (
+      <div className="space-y-6">
+        <Hero
+          title="Verificando base colaborativa"
+          description="Antes de importar un consolidado, la app esta conectando con Turso para revisar si el banco ya existe y traer esos datos."
+        />
+        <div className="rounded-xl border bg-card p-5 text-sm text-muted-foreground shadow-sm">
+          <div className="mb-3 h-2 w-full overflow-hidden rounded-sm bg-muted">
+            <div className="h-full w-1/3 animate-pulse rounded-sm bg-primary" />
+          </div>
+          Validando datos remotos...
+        </div>
+      </div>
+    );
+  }
   if (!data.workspace.hasQuestions) {
     return (
       <div className="space-y-6">

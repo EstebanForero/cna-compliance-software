@@ -27,6 +27,13 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { api } from "@/lib/api";
@@ -46,6 +53,10 @@ function WorkspacePage() {
   const [resetConfirmation, setResetConfirmation] = useState("");
   const [acknowledgeBackup, setAcknowledgeBackup] = useState(false);
   const [acknowledgeIrreversible, setAcknowledgeIrreversible] = useState(false);
+  const [replacementDialogOpen, setReplacementDialogOpen] = useState(false);
+  const [acknowledgeExistingImport, setAcknowledgeExistingImport] = useState(false);
+  const [acknowledgeImportBackup, setAcknowledgeImportBackup] = useState(false);
+  const [replacementConfirmation, setReplacementConfirmation] = useState("");
 
   const refresh = async () => {
     await queryClient.invalidateQueries({ queryKey: ["workspace"] });
@@ -66,6 +77,10 @@ function WorkspacePage() {
     mutationFn: api.importWorkbook,
     onSuccess: async () => {
       setPendingImportPath("");
+      setReplacementDialogOpen(false);
+      setAcknowledgeExistingImport(false);
+      setAcknowledgeImportBackup(false);
+      setReplacementConfirmation("");
       previewImport.reset();
       await refresh();
     },
@@ -149,6 +164,25 @@ function WorkspacePage() {
     if (typeof path !== "string") return;
     setPendingImportPath(path);
     previewImport.mutate({ path, cycleName });
+  }
+
+  function confirmImportWorkbook() {
+    if (!pendingImportPath) return;
+    if (workspace.data?.hasQuestions) {
+      setReplacementDialogOpen(true);
+      return;
+    }
+    importWorkbook.mutate({ path: pendingImportPath, cycleName });
+  }
+
+  function confirmReplacementImport() {
+    importWorkbook.mutate({
+      path: pendingImportPath,
+      cycleName,
+      acknowledgeExistingData: acknowledgeExistingImport,
+      acknowledgeBackup: acknowledgeImportBackup,
+      replacementConfirmation,
+    });
   }
 
   const resetReady =
@@ -425,9 +459,7 @@ function WorkspacePage() {
                   <div className="flex flex-wrap gap-2">
                     <Button
                       type="button"
-                      onClick={() =>
-                        importWorkbook.mutate({ path: pendingImportPath, cycleName })
-                      }
+                      onClick={confirmImportWorkbook}
                       disabled={!pendingImportPath || importWorkbook.isPending}
                     >
                       Confirmar importacion
@@ -461,12 +493,87 @@ function WorkspacePage() {
               ) : null}
               {previewImport.isError || importWorkbook.isError ? (
                 <p className="text-sm text-destructive">
-                  No se pudo leer/importar el archivo. Verifique que sea un consolidado
-                  con columnas de lineamiento, pregunta y publico.
+                  {importWorkbook.error instanceof Error
+                    ? importWorkbook.error.message
+                    : "No se pudo leer/importar el archivo. Verifique que sea un consolidado con columnas de lineamiento, pregunta y publico."}
                 </p>
               ) : null}
             </CardContent>
           </Card>
+
+          <Dialog open={replacementDialogOpen} onOpenChange={setReplacementDialogOpen}>
+            <DialogContent className="w-[min(92vw,38rem)]">
+              <DialogHeader>
+                <DialogTitle>Confirmar importacion sobre datos existentes</DialogTitle>
+                <DialogDescription>
+                  La base actual ya contiene informacion. Importar este consolidado puede
+                  actualizar preguntas, lineamientos, publicos, instrumentos e historial
+                  asociado al banco actual.
+                </DialogDescription>
+              </DialogHeader>
+              <div className="space-y-4 pt-2">
+                <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950 dark:border-amber-400/40 dark:bg-amber-950/35 dark:text-amber-100">
+                  Use esta opcion solo si el archivo seleccionado es el consolidado vigente
+                  que debe reemplazar o actualizar la base colaborativa.
+                </div>
+                <label className="flex items-start gap-3 text-sm">
+                  <input
+                    type="checkbox"
+                    className="mt-1"
+                    checked={acknowledgeExistingImport}
+                    onChange={(event) => setAcknowledgeExistingImport(event.target.checked)}
+                  />
+                  <span>
+                    Entiendo que la base ya tiene datos y que esta importacion puede
+                    modificar registros existentes.
+                  </span>
+                </label>
+                <label className="flex items-start gap-3 text-sm">
+                  <input
+                    type="checkbox"
+                    className="mt-1"
+                    checked={acknowledgeImportBackup}
+                    onChange={(event) => setAcknowledgeImportBackup(event.target.checked)}
+                  />
+                  <span>
+                    Ya exporte una copia .acna o guarde un snapshot manual antes de
+                    continuar.
+                  </span>
+                </label>
+                <div className="space-y-2">
+                  <p className="text-sm font-medium">
+                    Escriba <span className="font-mono">REEMPLAZAR CONSOLIDADO</span>
+                  </p>
+                  <Input
+                    value={replacementConfirmation}
+                    onChange={(event) => setReplacementConfirmation(event.target.value)}
+                    placeholder="REEMPLAZAR CONSOLIDADO"
+                  />
+                </div>
+                <div className="flex flex-wrap justify-end gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setReplacementDialogOpen(false)}
+                  >
+                    Cancelar
+                  </Button>
+                  <Button
+                    type="button"
+                    onClick={confirmReplacementImport}
+                    disabled={
+                      importWorkbook.isPending ||
+                      !acknowledgeExistingImport ||
+                      !acknowledgeImportBackup ||
+                      replacementConfirmation.trim() !== "REEMPLAZAR CONSOLIDADO"
+                    }
+                  >
+                    Importar y actualizar base
+                  </Button>
+                </div>
+              </div>
+            </DialogContent>
+          </Dialog>
 
           <Card>
             <CardHeader>

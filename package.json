@@ -9,6 +9,7 @@
     "build": "bunx tsr generate && tsc && vite build",
     "dev:tauri": "node scripts/tauri-with-env.mjs dev",
     "build:tauri": "node scripts/tauri-with-env.mjs build",
+    "build:arch": "node scripts/tauri-with-env.mjs build --no-bundle",
     "build:mac": "node scripts/tauri-with-env.mjs build --bundles app,dmg",
     "build:mac:universal": "node scripts/tauri-with-env.mjs build --target universal-apple-darwin --bundles app,dmg",
     "build:windows:msi": "node scripts/tauri-with-env.mjs build --bundles msi",

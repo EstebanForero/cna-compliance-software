@@ -221,6 +221,9 @@ export interface DashboardSummary {
 export interface ImportWorkbookRequest {
   path: string;
   cycleName?: string | null;
+  acknowledgeExistingData?: boolean | null;
+  acknowledgeBackup?: boolean | null;
+  replacementConfirmation?: string | null;
 }
 
 export interface ImportWorkbookResult {

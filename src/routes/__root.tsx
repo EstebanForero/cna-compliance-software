@@ -21,6 +21,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { OnboardingGate } from "@/components/onboarding-gate";
+import { ToastProvider } from "@/components/ui/toast";
 import { api } from "@/lib/api";
 import { useTheme } from "@/lib/theme";
 import { cn } from "@/lib/utils";
@@ -79,8 +80,9 @@ function RootLayout() {
   });
 
   return (
-    <OnboardingGate>
-      <div className="min-h-screen">
+    <ToastProvider>
+      <OnboardingGate>
+        <div className="min-h-screen">
         <aside className="fixed inset-y-0 left-0 hidden w-64 border-r bg-card/70 p-4 shadow-xl shadow-black/5 backdrop-blur-2xl md:flex md:flex-col">
           <div className="mb-8 flex items-center gap-3">
             <div className="flex size-10 items-center justify-center rounded-md bg-primary text-primary-foreground">
@@ -203,8 +205,9 @@ function RootLayout() {
             <Outlet />
           </div>
         </main>
-      </div>
-    </OnboardingGate>
+        </div>
+      </OnboardingGate>
+    </ToastProvider>
   );
 }
 

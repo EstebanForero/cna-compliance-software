@@ -63,6 +63,7 @@ export const api = {
     invoke<WorkspaceStatus>("configure_onedrive_workspace", { request }),
   configureTursoWorkspace: (request: ConfigureTursoWorkspaceRequest) =>
     invoke<WorkspaceStatus>("configure_turso_workspace", { request }),
+  refreshTursoWorkspace: () => invoke<WorkspaceStatus>("refresh_turso_workspace"),
   openDatabase: (request: OpenDatabaseRequest) =>
     invoke<WorkspaceStatus>("open_existing_database", { request }),
   exportDatabasePackage: (request: ExportDatabasePackageRequest) =>

@@ -67,8 +67,15 @@ pub(super) async fn acquire_lock(
     prune_expired_locks(connection).await?;
     if let Some(existing) = find_lock(connection, resource_type_value, resource_id).await? {
         if existing.editor_name != editor_name && existing.locked_until > now {
+            let resource_message = match resource_type {
+                CollaborationResourceType::Question => "Esta pregunta esta siendo editada",
+                CollaborationResourceType::GuidelineAspect => "Este lineamiento esta siendo editado",
+                CollaborationResourceType::InstrumentDefinition => {
+                    "Este instrumento esta siendo editado"
+                }
+            };
             return Err(AppError::Validation(format!(
-                "{} is editing this item until {}",
+                "{resource_message} actualmente por {} hasta {}.",
                 existing.editor_name,
                 existing.locked_until.format("%H:%M:%S")
             )));

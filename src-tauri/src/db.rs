@@ -214,6 +214,53 @@ mod tests {
 
         assert_eq!(acquired.editor_name, "Editor Dos");
     }
+
+    #[tokio::test]
+    async fn collaboration_tracks_presence_and_instrument_locks() {
+        let repository = LibSqlAutoEvalRepository::open_in_memory().await.unwrap();
+
+        repository
+            .heartbeat_collaboration_presence("Editor Uno")
+            .await
+            .unwrap();
+        repository
+            .heartbeat_collaboration_presence("Editor Dos")
+            .await
+            .unwrap();
+        let presence = repository.list_collaboration_presence().await.unwrap();
+        assert_eq!(presence.len(), 2);
+        assert!(presence.iter().any(|entry| entry.editor_name == "Editor Uno"));
+        assert!(presence.iter().any(|entry| entry.editor_name == "Editor Dos"));
+
+        repository
+            .acquire_collaboration_lock(
+                CollaborationResourceType::InstrumentDefinition,
+                "instrument-1",
+                "Editor Uno",
+                300,
+            )
+            .await
+            .unwrap();
+        let blocked = repository
+            .acquire_collaboration_lock(
+                CollaborationResourceType::InstrumentDefinition,
+                "instrument-1",
+                "Editor Dos",
+                300,
+            )
+            .await;
+        assert!(blocked.is_err());
+
+        let locks = repository
+            .list_collaboration_locks_for_resources(
+                CollaborationResourceType::InstrumentDefinition,
+                &["instrument-1".into()],
+            )
+            .await
+            .unwrap();
+        assert_eq!(locks.len(), 1);
+        assert_eq!(locks[0].editor_name, "Editor Uno");
+    }
 }
 
 impl LibSqlAutoEvalRepository {

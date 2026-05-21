@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+import { useToast } from "@/components/ui/toast";
 import { LineamentWorkSelector } from "@/features/questions/LineamentWorkSelector";
 import { QuestionForm } from "@/features/questions/QuestionForm";
 import { QuestionsTable } from "@/features/questions/QuestionsTable";
@@ -16,7 +17,7 @@ import {
   prepareQuestionForSave,
 } from "@/features/questions/questionFormat";
 import { api } from "@/lib/api";
-import type { NewQuestion } from "@/lib/types";
+import type { CollaborationLock, NewQuestion } from "@/lib/types";
 
 export const Route = createFileRoute("/questions")({
   component: QuestionsPage,
@@ -57,8 +58,11 @@ function QuestionsPage() {
   const [selectedLineamentId, setSelectedLineamentId] = useState(initialLineamentId);
   const [page, setPage] = useState(1);
   const [editingQuestionId, setEditingQuestionId] = useState<string | null>(null);
-  const [notice, setNotice] = useState("");
+  const [blockedQuestionLocks, setBlockedQuestionLocks] = useState<
+    Map<string, CollaborationLock>
+  >(new Map());
   const queryClient = useQueryClient();
+  const { toast } = useToast();
   const workspace = useQuery({ queryKey: ["workspace"], queryFn: api.workspace });
   const questions = useQuery({
     queryKey: ["questions"],
@@ -107,21 +111,35 @@ function QuestionsPage() {
     const start = (page - 1) * questionPageSize;
     return filtered.slice(start, start + questionPageSize);
   }, [filtered, page]);
-  const visibleQuestionIds = useMemo(
-    () => paginatedQuestions.map((question) => question.id),
-    [paginatedQuestions],
+  const blockedQuestionIds = useMemo(
+    () => Array.from(blockedQuestionLocks.keys()).sort(),
+    [blockedQuestionLocks],
   );
-  const locks = useQuery({
-    queryKey: ["collaboration-locks", "question", visibleQuestionIds],
-    queryFn: () =>
-      api.collaborationLocksForResources({
+  useQuery({
+    queryKey: ["known-blocked-question-locks", blockedQuestionIds],
+    queryFn: async () => {
+      const locks = await api.collaborationLocksForResources({
         resourceType: "question",
-        resourceIds: visibleQuestionIds,
-      }),
-    refetchInterval: workspace.data?.tursoConnected ? 10000 : false,
-    enabled: Boolean(workspace.data?.tursoConnected && visibleQuestionIds.length > 0),
+        resourceIds: blockedQuestionIds,
+      });
+      setBlockedQuestionLocks((current) => {
+        const next = new Map(current);
+        const active = new Map(locks.map((lock) => [lock.resourceId, lock] as const));
+        for (const id of blockedQuestionIds) {
+          const lock = active.get(id);
+          if (lock) {
+            next.set(id, lock);
+          } else {
+            next.delete(id);
+          }
+        }
+        return next;
+      });
+      return locks;
+    },
+    enabled: Boolean(workspace.data?.tursoConnected && blockedQuestionIds.length > 0),
+    refetchInterval: 10000,
   });
-
   const createQuestion = useMutation({
     mutationFn: (question: NewQuestion) =>
       api.createQuestion(prepareQuestionForSave(question, choiceOptions)),
@@ -132,7 +150,11 @@ function QuestionsPage() {
           : initialQuestion,
       );
       setChoiceOptions(initialChoiceOptions);
-      setNotice("Pregunta registrada. Revise validaciones antes de exportar.");
+      toast({
+        title: "Pregunta registrada",
+        description: "Revise validaciones antes de exportar.",
+        tone: "success",
+      });
       await queryClient.invalidateQueries({ queryKey: ["questions"] });
       await queryClient.invalidateQueries({ queryKey: ["dashboard"] });
     },
@@ -161,30 +183,63 @@ function QuestionsPage() {
         });
       }
       setEditingQuestionId(null);
-      setNotice("Pregunta actualizada y marcada segun impacto contra la linea base.");
+      toast({
+        title: "Pregunta actualizada",
+        description: "La pregunta quedo marcada segun su impacto contra la linea base.",
+        tone: "success",
+      });
       await queryClient.invalidateQueries({ queryKey: ["questions"] });
       await queryClient.invalidateQueries({ queryKey: ["dashboard"] });
       await queryClient.invalidateQueries({ queryKey: ["baseline-status"] });
     },
     onError: (error) => {
-      setNotice(error instanceof Error ? error.message : "No se pudo actualizar la pregunta.");
+      toast({
+        title: "No se pudo guardar",
+        description: error instanceof Error ? error.message : "No se pudo actualizar la pregunta.",
+        tone: "error",
+      });
     },
   });
   const acquireLock = useMutation({
     mutationFn: api.acquireCollaborationLock,
     onSuccess: async (_, request) => {
+      setBlockedQuestionLocks((current) => {
+        const next = new Map(current);
+        next.delete(request.resourceId);
+        return next;
+      });
       setEditingQuestionId(request.resourceId);
-      await queryClient.invalidateQueries({ queryKey: ["collaboration-locks"] });
     },
-    onError: (error) => {
-      setNotice(error instanceof Error ? error.message : "Otro editor esta modificando esta pregunta.");
+    onError: (error, request) => {
+      const fallback = "Esta pregunta esta siendo editada por otro editor.";
+      const description = error instanceof Error ? error.message : fallback;
+      toast({
+        title: "Pregunta bloqueada",
+        description,
+        tone: "warning",
+      });
+      void (async () => {
+        if (!workspace.data?.tursoConnected) return;
+        try {
+          const locks = await api.collaborationLocksForResources({
+            resourceType: "question",
+            resourceIds: [request.resourceId],
+          });
+          const lock = locks.find((item) => item.resourceId === request.resourceId);
+          if (!lock) return;
+          setBlockedQuestionLocks((current) => {
+            const next = new Map(current);
+            next.set(request.resourceId, lock);
+            return next;
+          });
+        } catch {
+          // The lock conflict toast is already visible; the next edit attempt can retry.
+        }
+      })();
     },
   });
   const releaseLock = useMutation({
     mutationFn: api.releaseCollaborationLock,
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["collaboration-locks"] });
-    },
   });
 
   useEffect(() => {
@@ -227,15 +282,6 @@ function QuestionsPage() {
       window.history.replaceState(null, "", window.location.pathname);
     }
   }, []);
-  const lockByResource = useMemo(
-    () =>
-      new Map(
-        (locks.data ?? [])
-          .filter((lock) => lock.resourceType === "question")
-          .map((lock) => [lock.resourceId, lock] as const),
-      ),
-    [locks.data],
-  );
   const currentEditorName = workspace.data?.editorProfile?.fullName ?? "";
   const handleEditQuestion = useCallback(
     (questionId: string) => {
@@ -244,23 +290,27 @@ function QuestionsPage() {
         setEditingQuestionId(null);
         return;
       }
-      if (!workspace.data?.tursoConnected) {
-        setEditingQuestionId(questionId);
+      const blockedLock = blockedQuestionLocks.get(questionId);
+      if (blockedLock) {
+        toast({
+          title: "Pregunta bloqueada",
+          description: `Esta pregunta esta siendo editada por ${blockedLock.editorName}.`,
+          tone: "warning",
+        });
         return;
       }
-      const lock = lockByResource.get(questionId);
-      if (lock && lock.editorName !== currentEditorName) {
-        setNotice(`Esta pregunta esta siendo editada por ${lock.editorName}.`);
+      if (!workspace.data?.tursoConnected) {
+        setEditingQuestionId(questionId);
         return;
       }
       acquireLock.mutate({ resourceType: "question", resourceId: questionId });
     },
     [
       acquireLock,
-      currentEditorName,
+      blockedQuestionLocks,
       editingQuestionId,
-      lockByResource,
       releaseLock,
+      toast,
       workspace.data?.tursoConnected,
     ],
   );
@@ -295,11 +345,6 @@ function QuestionsPage() {
         onChooseLineament={chooseLineament}
         onClearSelection={clearLineamentSelection}
       />
-      {notice ? (
-        <div className="rounded-lg border border-primary/20 bg-primary/10 p-3 text-sm text-primary">
-          {notice}
-        </div>
-      ) : null}
 
       <section className="grid gap-4 xl:grid-cols-[1fr_25rem]">
         <QuestionsTable
@@ -314,7 +359,8 @@ function QuestionsPage() {
           audienceOptions={audienceOptions}
           instruments={instruments.data ?? []}
           isUpdating={updateQuestion.isPending}
-          collaborationLocks={lockByResource}
+          editingQuestionLocked={Boolean(editingQuestionId && workspace.data?.tursoConnected)}
+          blockedQuestionLocks={blockedQuestionLocks}
           currentEditorName={currentEditorName}
           onSearchChange={setSearch}
           onPageChange={setPage}

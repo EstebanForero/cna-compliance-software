@@ -38,7 +38,8 @@ type QuestionsTableProps = {
   audienceOptions: string[];
   instruments: InstrumentDefinition[];
   isUpdating: boolean;
-  collaborationLocks: Map<string, CollaborationLock>;
+  editingQuestionLocked: boolean;
+  blockedQuestionLocks: Map<string, CollaborationLock>;
   currentEditorName: string;
   onSearchChange: (value: string) => void;
   onPageChange: (page: number) => void;
@@ -63,7 +64,8 @@ export const QuestionsTable = memo(function QuestionsTable({
   audienceOptions,
   instruments,
   isUpdating,
-  collaborationLocks,
+  editingQuestionLocked,
+  blockedQuestionLocks,
   currentEditorName,
   onSearchChange,
   onPageChange,
@@ -103,14 +105,9 @@ export const QuestionsTable = memo(function QuestionsTable({
             </thead>
             <tbody>
               {questions.map((question) => {
-                const lock = collaborationLocks.get(question.id);
                 const instrumentLabels = instrumentLabelsForQuestion(question, instruments);
-                const lockedByOther = Boolean(lock && lock.editorName !== currentEditorName);
-                const lockLabel = lockedByOther
-                  ? `Editando: ${lock?.editorName}`
-                  : lock
-                    ? "Bloqueada para ti"
-                    : "";
+                const isEditingHere = editingQuestionId === question.id;
+                const blockedLock = blockedQuestionLocks.get(question.id);
                 return (
                   <Fragment key={question.id}>
                     <tr className="border-b last:border-b-0">
@@ -124,10 +121,16 @@ export const QuestionsTable = memo(function QuestionsTable({
                             ? "Sin convencion"
                             : responseConventionLabel(question.conventionCode)}
                         </p>
-                        {lockLabel ? (
+                        {isEditingHere && editingQuestionLocked ? (
                           <p className="mt-2 inline-flex items-center gap-1 rounded-md border bg-muted/60 px-2 py-1 text-xs text-muted-foreground">
                             <Lock className="size-3" />
-                            {lockLabel}
+                            Bloqueada para tu edición: {currentEditorName || "este editor"}
+                          </p>
+                        ) : null}
+                        {blockedLock ? (
+                          <p className="mt-2 inline-flex items-center gap-1 rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-xs text-amber-900 dark:border-amber-400/40 dark:bg-amber-950/45 dark:text-amber-100">
+                            <Lock className="size-3" />
+                            En edición por {blockedLock.editorName}
                           </p>
                         ) : null}
                       </td>
@@ -168,14 +171,21 @@ export const QuestionsTable = memo(function QuestionsTable({
                       <td className="py-3 pl-3">
                         <Button
                           type="button"
-                          variant={lock ? "secondary" : "outline"}
+                          variant={isEditingHere && editingQuestionLocked ? "secondary" : "outline"}
                           size="icon"
-                          aria-label={lockedByOther ? `Bloqueada por ${lock?.editorName}` : "Editar pregunta"}
+                          aria-label="Editar pregunta"
                           onClick={() => onEditQuestion(question.id)}
-                          title={lockLabel || "Editar pregunta"}
-                          disabled={lockedByOther}
+                          title={
+                            blockedLock
+                              ? `Esta pregunta esta siendo editada por ${blockedLock.editorName}`
+                              : "Editar pregunta"
+                          }
                         >
-                          {lock ? <Lock className="size-4" /> : <Pencil className="size-4" />}
+                          {isEditingHere && editingQuestionLocked ? (
+                            <Lock className="size-4" />
+                          ) : (
+                            <Pencil className="size-4" />
+                          )}
                         </Button>
                       </td>
                     </tr>

@@ -3,15 +3,16 @@ mod auth;
 mod db;
 mod domain;
 mod error;
+mod file_utils;
 mod importer;
 mod repository;
 mod service;
+mod workspace_state;
 
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, RwLock};
+use std::sync::RwLock;
 
 use base64::Engine;
-use db::LibSqlAutoEvalRepository;
 use domain::{
     AcquireCollaborationLockRequest, AvailableInstrumentPublic, BaselineStatus, ChangeLogEntry,
     CollaborationLock, CollaborationLocksForResourcesRequest, CollaborationPresence,
@@ -20,7 +21,7 @@ use domain::{
     EditorProfile, ExportDatabasePackageRequest, ExportProviderReviewDocxRequest,
     ExportWorkbookRequest, ExportWorkbookResult, GuidelineAspect, HistorySnapshot,
     ImportWorkbookPreviewResult, ImportWorkbookRequest, ImportWorkbookResult, InstrumentDefinition,
-    InstrumentPublicOption, MarkOriginalBaselineRequest, MicrosoftAccount, MicrosoftAuthConfig,
+    InstrumentPublicOption, MarkOriginalBaselineRequest, MicrosoftAuthConfig,
     MicrosoftLoginRequest, MicrosoftLoginResult, NewGuidelineAspect, NewProviderLink, NewQuestion,
     OpenDatabasePackageRequest, OpenDatabaseRequest, ProviderLink, ProviderQuestionReview,
     ProviderQuestionReviewItem, Question, ReleaseCollaborationLockRequest, ResetDatabaseRequest,
@@ -31,28 +32,12 @@ use domain::{
     UpdateGuidelineAspectResult, UpdateQuestionRequest, ValidationIssue, WorkspaceStatus,
 };
 use error::{AppError, CommandError};
-use service::AutoEvaluationService;
+use file_utils::{normalize_image_extension, sanitize_file_stem};
 use tauri::{Manager, State};
+use workspace_state::{default_turso_credentials, load_initial_workspace, AppState};
 
 const DATABASE_PACKAGE_EXTENSION: &str = "acna";
 const DATABASE_PACKAGE_DESCRIPTION: &str = "Autoevaluacion CNA database package";
-
-struct RuntimeWorkspace {
-    service: Arc<AutoEvaluationService>,
-    database_path: PathBuf,
-    onedrive_path: Option<PathBuf>,
-    turso_database_url: Option<String>,
-    turso_auth_token: Option<String>,
-    microsoft_account: Option<MicrosoftAccount>,
-    microsoft_auth_config: Option<MicrosoftAuthConfig>,
-    microsoft_access_token: Option<String>,
-    editor_profile: Option<EditorProfile>,
-}
-
-struct AppState {
-    workspace: RwLock<RuntimeWorkspace>,
-    config_file: PathBuf,
-}
 
 #[tauri::command]
 async fn get_workspace_status(state: State<'_, AppState>) -> Result<WorkspaceStatus, CommandError> {
@@ -100,6 +85,31 @@ async fn configure_turso_workspace(
     }
     state.reopen_turso(database_url.to_string(), auth_token.to_string())?;
     get_workspace_status(state).await
+}
+
+#[tauri::command]
+async fn refresh_turso_workspace(
+    state: State<'_, AppState>,
+) -> Result<WorkspaceStatus, CommandError> {
+    let (database_url, auth_token) = {
+        let workspace = state
+            .workspace
+            .read()
+            .map_err(|_| AppError::Validation("workspace lock is poisoned".into()))?;
+        let defaults = default_turso_credentials();
+        (
+            workspace.turso_database_url.clone().or(defaults.0),
+            workspace.turso_auth_token.clone().or(defaults.1),
+        )
+    };
+
+    match (database_url, auth_token) {
+        (Some(database_url), Some(auth_token)) => {
+            state.reopen_turso(database_url, auth_token)?;
+            get_workspace_status(state).await
+        }
+        _ => get_workspace_status(state).await,
+    }
 }
 
 #[tauri::command]
@@ -808,109 +818,6 @@ async fn export_provider_review_docx(
     Ok(())
 }
 
-impl AppState {
-    fn snapshot(&self) -> Result<(Arc<AutoEvaluationService>, WorkspaceStatus), AppError> {
-        let workspace = self
-            .workspace
-            .read()
-            .map_err(|_| AppError::Validation("workspace lock is poisoned".into()))?;
-        let status = WorkspaceStatus {
-            database_path: workspace.database_path.to_string_lossy().to_string(),
-            configured_onedrive_path: workspace
-                .onedrive_path
-                .as_ref()
-                .map(|path| path.to_string_lossy().to_string()),
-            turso_database_url: workspace.turso_database_url.clone(),
-            microsoft_account: workspace.microsoft_account.clone(),
-            microsoft_auth_config: workspace.microsoft_auth_config.clone(),
-            editor_profile: workspace.editor_profile.clone(),
-            graph_sync_available: workspace.microsoft_access_token.is_some(),
-            turso_connected: workspace.turso_database_url.is_some(),
-            has_questions: false,
-        };
-        Ok((Arc::clone(&workspace.service), status))
-    }
-
-    fn reopen(
-        &self,
-        database_path: PathBuf,
-        onedrive_path: Option<PathBuf>,
-        microsoft_account: Option<MicrosoftAccount>,
-        microsoft_auth_config: Option<MicrosoftAuthConfig>,
-    ) -> Result<(), AppError> {
-        if let Some(parent) = database_path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-
-        let repository =
-            tauri::async_runtime::block_on(LibSqlAutoEvalRepository::open(&database_path))?;
-        let service = AutoEvaluationService::new(Arc::new(repository));
-        let mut workspace = self
-            .workspace
-            .write()
-            .map_err(|_| AppError::Validation("workspace lock is poisoned".into()))?;
-        workspace.service = Arc::new(service);
-        workspace.database_path = database_path;
-        workspace.onedrive_path = onedrive_path;
-        workspace.turso_database_url = None;
-        workspace.turso_auth_token = None;
-        if microsoft_account.is_some() {
-            workspace.microsoft_account = microsoft_account;
-        }
-        if microsoft_auth_config.is_some() {
-            workspace.microsoft_auth_config = microsoft_auth_config;
-        }
-        self.save_config(&workspace)
-    }
-
-    fn reopen_turso(&self, database_url: String, auth_token: String) -> Result<(), AppError> {
-        let repository = tauri::async_runtime::block_on(LibSqlAutoEvalRepository::open_remote(
-            &database_url,
-            &auth_token,
-        ))?;
-        let service = AutoEvaluationService::new(Arc::new(repository));
-        let mut workspace = self
-            .workspace
-            .write()
-            .map_err(|_| AppError::Validation("workspace lock is poisoned".into()))?;
-        workspace.service = Arc::new(service);
-        workspace.turso_database_url = Some(database_url);
-        workspace.turso_auth_token = Some(auth_token);
-        workspace.onedrive_path = None;
-        self.save_config(&workspace)
-    }
-
-    fn save_config(&self, workspace: &RuntimeWorkspace) -> Result<(), AppError> {
-        let content = serde_json::json!({
-            "databasePath": workspace.database_path,
-            "onedrivePath": workspace.onedrive_path,
-            "tursoDatabaseUrl": workspace.turso_database_url,
-            "tursoAuthToken": workspace.turso_auth_token,
-            "microsoftAccount": workspace.microsoft_account,
-            "microsoftAuthConfig": workspace.microsoft_auth_config,
-            "microsoftAccessToken": workspace.microsoft_access_token,
-            "editorProfile": workspace.editor_profile,
-        });
-        if let Some(parent) = self.config_file.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        std::fs::write(&self.config_file, serde_json::to_vec_pretty(&content)?)?;
-        Ok(())
-    }
-
-    fn current_editor_name(&self) -> Result<String, AppError> {
-        self.workspace
-            .read()
-            .map_err(|_| AppError::Validation("workspace lock is poisoned".into()))?
-            .editor_profile
-            .as_ref()
-            .map(|profile| profile.full_name.clone())
-            .ok_or_else(|| {
-                AppError::Validation("save the editor full name before making changes".into())
-            })
-    }
-}
-
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -933,6 +840,7 @@ pub fn run() {
             get_workspace_status,
             configure_onedrive_workspace,
             configure_turso_workspace,
+            refresh_turso_workspace,
             open_existing_database,
             export_database_package,
             open_database_package,
@@ -981,110 +889,6 @@ pub fn run() {
         .expect("error while running tauri application");
 }
 
-fn load_initial_workspace(
-    config_file: &Path,
-    data_dir: &Path,
-) -> Result<RuntimeWorkspace, AppError> {
-    let saved = read_workspace_config(config_file);
-    let launch_database_path = database_package_from_process_args();
-    let database_path = launch_database_path
-        .or_else(|| {
-            saved
-                .as_ref()
-                .and_then(|value| value.get("databasePath"))
-                .and_then(|value| value.as_str())
-                .map(PathBuf::from)
-        })
-        .unwrap_or_else(|| data_dir.join("autoevaluacion-cna.db"));
-    let onedrive_path = saved
-        .as_ref()
-        .and_then(|value| value.get("onedrivePath"))
-        .and_then(|value| value.as_str())
-        .map(PathBuf::from);
-    let turso_database_url = saved
-        .as_ref()
-        .and_then(|value| value.get("tursoDatabaseUrl"))
-        .and_then(|value| value.as_str())
-        .map(ToOwned::to_owned)
-        .or_else(|| std::env::var("AUTOCNA_TURSO_DATABASE_URL").ok())
-        .or_else(|| std::env::var("TURSO_DATABASE_URL").ok())
-        .or_else(|| embedded_env("AUTOCNA_TURSO_DATABASE_URL"))
-        .or_else(|| embedded_env("TURSO_DATABASE_URL"));
-    let turso_auth_token = saved
-        .as_ref()
-        .and_then(|value| value.get("tursoAuthToken"))
-        .and_then(|value| value.as_str())
-        .map(ToOwned::to_owned)
-        .or_else(|| std::env::var("AUTOCNA_TURSO_AUTH_TOKEN").ok())
-        .or_else(|| std::env::var("TURSO_AUTH_TOKEN").ok())
-        .or_else(|| embedded_env("AUTOCNA_TURSO_AUTH_TOKEN"))
-        .or_else(|| embedded_env("TURSO_AUTH_TOKEN"));
-    let microsoft_account = saved
-        .as_ref()
-        .and_then(|value| value.get("microsoftAccount").cloned())
-        .and_then(|value| serde_json::from_value(value).ok());
-    let microsoft_auth_config = saved
-        .as_ref()
-        .and_then(|value| value.get("microsoftAuthConfig").cloned())
-        .and_then(|value| serde_json::from_value(value).ok());
-    let microsoft_access_token = saved
-        .as_ref()
-        .and_then(|value| value.get("microsoftAccessToken"))
-        .and_then(|value| value.as_str())
-        .map(ToOwned::to_owned);
-    let editor_profile = saved
-        .as_ref()
-        .and_then(|value| value.get("editorProfile").cloned())
-        .and_then(|value| serde_json::from_value(value).ok());
-
-    if let Some(parent) = database_path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-
-    let repository = if let (Some(database_url), Some(auth_token)) =
-        (turso_database_url.as_deref(), turso_auth_token.as_deref())
-    {
-        tauri::async_runtime::block_on(LibSqlAutoEvalRepository::open_remote(
-            database_url,
-            auth_token,
-        ))?
-    } else {
-        tauri::async_runtime::block_on(LibSqlAutoEvalRepository::open(&database_path))?
-    };
-    let service = AutoEvaluationService::new(Arc::new(repository));
-
-    Ok(RuntimeWorkspace {
-        service: Arc::new(service),
-        database_path,
-        onedrive_path,
-        turso_database_url,
-        turso_auth_token,
-        microsoft_account,
-        microsoft_auth_config,
-        microsoft_access_token,
-        editor_profile,
-    })
-}
-
-fn embedded_env(name: &str) -> Option<String> {
-    match name {
-        "AUTOCNA_TURSO_DATABASE_URL" => option_env!("AUTOCNA_TURSO_DATABASE_URL"),
-        "TURSO_DATABASE_URL" => option_env!("TURSO_DATABASE_URL"),
-        "AUTOCNA_TURSO_AUTH_TOKEN" => option_env!("AUTOCNA_TURSO_AUTH_TOKEN"),
-        "TURSO_AUTH_TOKEN" => option_env!("TURSO_AUTH_TOKEN"),
-        _ => None,
-    }
-    .map(str::trim)
-    .filter(|value| !value.is_empty())
-    .map(ToOwned::to_owned)
-}
-
-fn read_workspace_config(path: &Path) -> Option<serde_json::Value> {
-    std::fs::read(path)
-        .ok()
-        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
-}
-
 fn database_package_path(path: &str) -> Result<PathBuf, AppError> {
     let mut path = PathBuf::from(path.trim());
     if path.extension().is_none() {
@@ -1108,40 +912,9 @@ fn existing_database_package_path(path: &str) -> Result<PathBuf, AppError> {
     Ok(path)
 }
 
-fn database_package_from_process_args() -> Option<PathBuf> {
-    std::env::args_os()
-        .skip(1)
-        .map(PathBuf::from)
-        .find(|path| is_database_package_path(path))
-}
-
 fn is_database_package_path(path: &Path) -> bool {
     path.extension()
         .and_then(|extension| extension.to_str())
         .map(|extension| extension.eq_ignore_ascii_case(DATABASE_PACKAGE_EXTENSION))
         .unwrap_or(false)
-}
-
-fn normalize_image_extension(value: &str) -> &'static str {
-    match value {
-        "jpeg" | "jpg" => "jpg",
-        "gif" => "gif",
-        "webp" => "webp",
-        _ => "png",
-    }
-}
-
-fn sanitize_file_stem(value: &str) -> String {
-    value
-        .chars()
-        .map(|character| {
-            if character.is_ascii_alphanumeric() || matches!(character, '-' | '_') {
-                character
-            } else {
-                '-'
-            }
-        })
-        .collect::<String>()
-        .trim_matches('-')
-        .to_string()
 }

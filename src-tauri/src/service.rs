@@ -337,6 +337,25 @@ impl AutoEvaluationService {
         request: ImportWorkbookRequest,
         editor_name: &str,
     ) -> Result<ImportWorkbookResult, AppError> {
+        let existing_questions = self.repository.list_questions().await?;
+        let existing_aspects = self.repository.list_guideline_aspects().await?;
+        if !existing_questions.is_empty() || !existing_aspects.is_empty() {
+            let confirmation = request
+                .replacement_confirmation
+                .as_deref()
+                .map(str::trim)
+                .unwrap_or_default();
+            if request.acknowledge_existing_data != Some(true)
+                || request.acknowledge_backup != Some(true)
+                || confirmation != "REEMPLAZAR CONSOLIDADO"
+            {
+                return Err(AppError::Validation(
+                    "la base ya tiene datos; confirme la importacion escribiendo REEMPLAZAR CONSOLIDADO"
+                        .into(),
+                ));
+            }
+        }
+
         let path = std::path::PathBuf::from(&request.path);
         let parsed = parse_questions_workbook(&path)?;
         let should_fix_initial_original =
