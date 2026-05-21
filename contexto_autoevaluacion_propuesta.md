@@ -88,6 +88,19 @@ La solución propuesta consiste en implementar una aplicación local que adminis
 - **RF-20:** Revisar preguntas por lineamiento y abrir rápidamente el banco filtrado por ese aspecto.
 - **RF-21:** Ejecutar revisión del proveedor por pregunta, marcando correcta, requiere modificación o no aparece, con observación y evidencia opcional.
 - **RF-22:** Generar un documento Word de revisión del proveedor con estado, observaciones y evidencia registrada por pregunta.
+- **RF-23:** Configurar instrumentos como entidades editables y asignar públicos/subpúblicos detectados desde el consolidado.
+- **RF-24:** Ejecutar revisión del proveedor por instrumento exportado, no por público suelto.
+- **RF-25:** Exportar el documento Word de revisión del proveedor únicamente para el instrumento seleccionado.
+- **RF-26:** Permitir pegar imágenes como evidencia y adjuntarlas automáticamente a la revisión de proveedor.
+- **RF-27:** Usar Turso Cloud como modo colaborativo recomendado, con estado visible de conexión y editores activos.
+- **RF-28:** Adquirir bloqueos de edición al intentar editar preguntas, lineamientos o instrumentos, mostrando el responsable si otro editor tiene el lock.
+- **RF-29:** Evitar lecturas innecesarias de locks; solo consultar locks conocidos o el recurso que el usuario intenta editar.
+- **RF-30:** Bloquear guardados si otro editor cambió la pregunta desde que el usuario la cargó.
+- **RF-31:** Antes de mostrar importación inicial, validar si Turso ya contiene datos y cargarlos como fuente colaborativa.
+- **RF-32:** Si la base ya contiene datos, exigir confirmación reforzada antes de importar otro consolidado.
+- **RF-33:** Exportar y abrir paquetes `.acna` con la base completa, historial, línea base y revisión de proveedor.
+- **RF-34:** Mantener snapshots manuales persistentes hasta borrado explícito por el usuario.
+- **RF-35:** Separar la aplicación por capas y módulos documentados para mantener importación, exportación, colaboración, proveedor, historial y persistencia evolucionables.
 
 ## 5. Documentos y artefactos
 

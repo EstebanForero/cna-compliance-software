@@ -1,5 +1,144 @@
 # Autoevaluacion CNA Architecture
 
+## Architecture Goals
+
+- Keep Excel as an import/export artifact, not the source of truth.
+- Keep domain rules in Rust service modules where they are testable without the UI.
+- Keep the frontend focused on workflow and interaction, not data normalization.
+- Keep persistence interchangeable through `AutoEvalRepository`.
+- Keep collaboration predictable by using Turso as one shared database plus short-lived locks.
+- Make destructive workflow steps explicit in both UI and backend.
+
+## Layered Architecture
+
+```text
+React Routes
+  -> Feature Components
+    -> src/lib/api.ts
+      -> Tauri Commands
+        -> AutoEvaluationService
+          -> AutoEvalRepository trait
+            -> LibSqlAutoEvalRepository
+              -> libSQL local file or Turso Cloud
+```
+
+### Frontend Layers
+
+- **Routes (`src/routes`)**
+  - Own page layout, route params, query wiring and high-level orchestration.
+  - Should not contain complete workflows when those workflows have modal state, several mutations, or domain-specific UI. Those move to `src/features`.
+  - Example: `workspace.tsx` owns configuration layout; `ImportConsolidatedPanel` owns Excel import preview, confirmation and import mutations.
+
+- **Features (`src/features`)**
+  - Own reusable domain experiences: question editing, lineamiento management, instrument configuration, import workflow, dashboard cards.
+  - May compose UI primitives and call `api`.
+  - May contain frontend-only derived presentation helpers, but not canonical business normalization.
+
+- **UI Primitives (`src/components/ui`)**
+  - Small reusable controls following the shadcn-style component boundary.
+  - No domain knowledge.
+
+- **API Contract (`src/lib/api.ts`, `src/lib/types.ts`)**
+  - Single frontend boundary to Tauri commands.
+  - TypeScript shapes mirror Rust `serde(rename_all = "camelCase")` DTOs.
+
+### Backend Layers
+
+- **Tauri composition (`src-tauri/src/lib.rs`)**
+  - Initializes plugins, app state and command registration only.
+  - Does not contain command bodies or business rules.
+
+- **Commands (`src-tauri/src/commands`)**
+  - Thin controllers grouped by application capability:
+    - `workspace`: local/Turso/Microsoft configuration and `.acna` packages.
+    - `bank`: dashboard, questions, lineamientos, instruments, import/export, validation.
+    - `collaboration`: presence and locks.
+    - `history`: manual snapshots and restore.
+    - `provider`: provider links, question review, evidence and DOCX.
+  - Commands may validate transport-level input, resolve current editor, and record changes after service calls.
+  - Commands do not parse Excel, calculate diffs, or decide export structure.
+
+- **Application Service (`src-tauri/src/service.rs`, `src-tauri/src/service/*`)**
+  - Owns workflow rules and orchestration across repository methods.
+  - Enforces destructive confirmations such as baseline replacement, database cleanup and import over existing data.
+  - Owns validation, baseline diff, provider review and export orchestration.
+  - Depends only on `AutoEvalRepository`, not on libSQL.
+
+- **Repository Contract (`src-tauri/src/repository.rs`)**
+  - Defines persistence operations required by services.
+  - Enables mock-based unit tests with `mockall`.
+
+- **Persistence (`src-tauri/src/db.rs`, `src-tauri/src/db/*`)**
+  - Implements `AutoEvalRepository` for libSQL/Turso.
+  - Owns schema, row mapping, migrations, deduplication constraints and database-specific queries.
+  - Does not own UX workflows or export decisions.
+
+- **Import/Export Support**
+  - `importer.rs` and `importer/*` parse Excel, detect cell color marks and normalize incoming workbook rows into domain DTOs.
+  - `audience.rs` centralizes public/subpublic/instrument label normalization shared by import, export and provider review.
+  - `service/export.rs` writes consolidated and instrument workbooks using domain diffs.
+
+## Module Map
+
+| Path | Responsibility |
+| --- | --- |
+| `src-tauri/src/domain.rs` | Serializable domain DTOs and enums shared with frontend. |
+| `src-tauri/src/workspace_state.rs` | Runtime workspace, config file, app data paths, Turso default resolution. |
+| `src-tauri/src/commands/*` | Tauri command layer split by capability. |
+| `src-tauri/src/service.rs` | Core application service facade. |
+| `src-tauri/src/service/baseline.rs` | Original baseline snapshots and question diff semantics. |
+| `src-tauri/src/service/export.rs` | Consolidated/instrument Excel generation. |
+| `src-tauri/src/service/provider.rs` | Provider review grouping, evidence and DOCX report generation. |
+| `src-tauri/src/service/validation.rs` | Blocking/warning validation rules. |
+| `src-tauri/src/db/*` | libSQL persistence implementation, schema, rows and per-aggregate queries. |
+| `src-tauri/src/importer/*` | Excel workbook extraction and mark/color detection. |
+| `src/features/*` | Frontend domain workflows and reusable page sections. |
+| `src/routes/*` | Route-level layouts and page orchestration. |
+
+## Architecture Decision Records
+
+### ADR-001: Tauri Desktop Instead Of Server App
+
+Decision: Ship as a Tauri desktop app with local OS integration.
+
+Reasoning: The workflow is document-heavy, used by a small internal team, and needs file dialogs, local Excel import/export, local evidence images and Windows/Linux packaging. A server-side app would add hosting and authentication complexity without improving the primary workflow.
+
+### ADR-002: libSQL/Turso Repository Boundary
+
+Decision: Use libSQL locally and Turso remotely behind `AutoEvalRepository`.
+
+Reasoning: The same repository implementation can connect to a local database file or a Turso Cloud database. The service layer remains testable with mocks and can later support another persistence backend if needed.
+
+### ADR-003: Excel Is Not The Source Of Truth
+
+Decision: Excel files are imported as source documents and exported as delivery artifacts. The database is the source of truth after import.
+
+Reasoning: The current manual process depends on Excel formatting conventions and color marks, but long-term traceability, deduplication, collaboration and validation require structured storage.
+
+### ADR-004: Backend Owns Public/Instrument Normalization
+
+Decision: Publico/subpublico and instrument grouping rules live in Rust (`audience.rs`) and are consumed by frontend APIs.
+
+Reasoning: These rules affect import, export, provider review and UI options. Reimplementing them in React would create mismatches and the exact bugs previously seen with duplicated/incorrect publics.
+
+### ADR-005: Reinforced Confirmation In UI And Backend
+
+Decision: Irreversible or high-risk actions require confirmation in the frontend and are also enforced in the backend.
+
+Reasoning: UI-only protection can be bypassed by a stale screen, command call or future route. Backend enforcement protects imports over existing data, baseline replacement and database cleanup.
+
+### ADR-006: Collaboration Locks Are Acquired On Edit Attempt
+
+Decision: Do not poll locks for every visible question. Acquire a question lock when the user clicks edit, then poll only known blocked locks.
+
+Reasoning: This reduces Turso reads and makes lock checks proportional to actual editing conflicts. Backend writes still enforce locks and optimistic `updated_at` checks.
+
+### ADR-007: `.acna` Is A Domain Package Extension
+
+Decision: `.acna` files are complete libSQL/SQLite database packages with a domain-specific file association.
+
+Reasoning: Users need a portable handoff/backup file that contains current data, baseline, history and provider review state. A custom extension communicates app ownership while preserving database portability.
+
 ## Core Boundaries
 
 - **Workspace:** local configuration, editor profile, database location, OneDrive folder sync and Microsoft Graph app-folder sync.
@@ -76,8 +215,10 @@
 - Turso Cloud is the recommended/default sync mode. It connects the repository directly to a remote `libsql://` database; OneDrive and Microsoft Graph are secondary backup/copy flows.
 - Turso URL/token can be provided in the Workspace screen, runtime environment variables, or build-time environment variables embedded into the installer (`AUTOCNA_TURSO_DATABASE_URL` / `AUTOCNA_TURSO_AUTH_TOKEN`, with `TURSO_DATABASE_URL` / `TURSO_AUTH_TOKEN` also accepted). Desktop dev and installer builds all go through `scripts/tauri-with-env.mjs`, which loads local `.env.build`; `.env.build` is ignored by git and `.env.build.example` documents the required keys. `bun run dev`, `bun run dev:tauri`, `bun run build:windows:msi` and `bun run build:windows:nsis` therefore use the same Turso defaults.
 - The token must be rotated if it is pasted into chat, committed, or shared in an installer package.
-- In Turso mode, question and lineamiento screens poll for fresh data every few seconds so edits from other users appear without manual reload.
-- Editing a question first checks for an active `question` collaboration lock. If another editor owns it, the table shows that editor's name and the edit action is disabled. If no lock exists, the app acquires a five-minute lock before opening the editor.
+- In Turso mode, screens refresh workspace/presence periodically. Lock checks are not run for every visible question.
+- Editing a question attempts to acquire a `question` collaboration lock. If another editor owns it, the app shows a top-right toast with that editor's name and caches that question as known blocked.
+- Known blocked question locks are rechecked every 10 seconds until they disappear. This keeps Turso reads proportional to conflicts instead of table size.
+- If no lock exists, the app acquires a five-minute lock before opening the editor.
 - Backend saves also reject attempts to update a question while another editor owns its lock, so bypassing the UI still cannot overwrite a locked edit.
 - Saving a question sends the `updated_at` value that the editor originally loaded. If another editor saved the question first, the backend rejects the save and asks the user to refresh before trying again.
 - Locks are coordination hints, not permanent permissions. Expired locks are pruned automatically so abandoned sessions do not block the team.
