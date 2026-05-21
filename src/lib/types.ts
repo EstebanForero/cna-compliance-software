@@ -38,10 +38,12 @@ export interface MicrosoftLoginResult {
 export interface WorkspaceStatus {
   databasePath: string;
   configuredOnedrivePath?: string | null;
+  tursoDatabaseUrl?: string | null;
   microsoftAccount?: MicrosoftAccount | null;
   microsoftAuthConfig?: MicrosoftAuthConfig | null;
   editorProfile?: EditorProfile | null;
   graphSyncAvailable: boolean;
+  tursoConnected: boolean;
   hasQuestions: boolean;
 }
 
@@ -51,6 +53,11 @@ export interface EditorProfile {
 
 export interface SaveEditorProfileRequest {
   fullName: string;
+}
+
+export interface ConfigureTursoWorkspaceRequest {
+  databaseUrl: string;
+  authToken: string;
 }
 
 export interface Question {
@@ -86,6 +93,7 @@ export interface NewQuestion {
 export interface UpdateQuestionRequest {
   questionId: string;
   question: NewQuestion;
+  expectedUpdatedAt?: string | null;
 }
 
 export interface GuidelineAspect {
@@ -130,6 +138,39 @@ export interface ChangeLogEntry {
   editorName: string;
   summary: string;
   createdAt: string;
+}
+
+export type CollaborationResourceType =
+  | "question"
+  | "guidelineAspect"
+  | "instrumentDefinition";
+
+export interface CollaborationLock {
+  resourceType: CollaborationResourceType;
+  resourceId: string;
+  editorName: string;
+  lockedUntil: string;
+  updatedAt: string;
+}
+
+export interface CollaborationPresence {
+  editorName: string;
+  lastSeenAt: string;
+}
+
+export interface AcquireCollaborationLockRequest {
+  resourceType: CollaborationResourceType;
+  resourceId: string;
+}
+
+export interface CollaborationLocksForResourcesRequest {
+  resourceType: CollaborationResourceType;
+  resourceIds: string[];
+}
+
+export interface ReleaseCollaborationLockRequest {
+  resourceType: CollaborationResourceType;
+  resourceId: string;
 }
 
 export interface HistorySnapshot {
@@ -244,6 +285,30 @@ export interface InstrumentPublicOption {
   label: string;
   subpublics: string[];
   questionCount: number;
+}
+
+export interface InstrumentDefinition {
+  id: string;
+  key: string;
+  label: string;
+  publicKeys: string[];
+  publicLabels: string[];
+  isSystem: boolean;
+  updatedAt: string;
+}
+
+export interface SaveInstrumentDefinitionRequest {
+  id?: string | null;
+  label: string;
+  publicKeys: string[];
+}
+
+export interface AvailableInstrumentPublic {
+  key: string;
+  label: string;
+  subpublics: string[];
+  assignedInstrumentId?: string | null;
+  assignedInstrumentLabel?: string | null;
 }
 
 export interface ExportWorkbookResult {

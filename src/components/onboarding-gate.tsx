@@ -49,7 +49,7 @@ export function OnboardingGate({ children }: { children: React.ReactNode }) {
           </div>
           <div>
             <p className="text-sm font-semibold">Autoevaluacion CNA</p>
-            <p className="text-xs text-muted-foreground">Fuente unica local</p>
+            <p className="text-xs text-muted-foreground">Fuente unica colaborativa</p>
           </div>
         </div>
 
@@ -96,9 +96,10 @@ export function OnboardingGate({ children }: { children: React.ReactNode }) {
             <div className="border-t bg-muted/35 p-6 lg:border-l lg:border-t-0">
               <div className="space-y-3">
                 {[
-                  "Configurar OneDrive o Graph",
+                  "Usar colaboración Turso configurada",
                   "Importar preguntas y lineamientos",
                   "Revisar lineamientos CNA",
+                  "Usar OneDrive o Graph solo como copia",
                   "Validar y preparar entrega",
                 ].map((step, index) => (
                   <div key={step} className="apple-tile flex items-center gap-3 p-3">

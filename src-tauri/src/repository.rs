@@ -1,10 +1,11 @@
 use async_trait::async_trait;
 
 use crate::domain::{
-    ChangeLogEntry, GuidelineAspect, HistorySnapshot, NewGuidelineAspect, NewProviderLink,
+    ChangeLogEntry, CollaborationLock, CollaborationPresence, CollaborationResourceType,
+    GuidelineAspect, HistorySnapshot, InstrumentDefinition, NewGuidelineAspect, NewProviderLink,
     NewQuestion, NewSourceDocument, OriginalQuestionSnapshot, ProviderLink, ProviderQuestionReview,
-    Question, SaveProviderQuestionReviewRequest, SourceDocument, SurveyCycle,
-    UpdateGuidelineAspectResult, ValidationIssue,
+    Question, SaveInstrumentDefinitionRequest, SaveProviderQuestionReviewRequest, SourceDocument,
+    SurveyCycle, UpdateGuidelineAspectResult, ValidationIssue,
 };
 use crate::error::AppError;
 
@@ -38,6 +39,12 @@ pub trait AutoEvalRepository: Send + Sync {
         snapshots: Vec<OriginalQuestionSnapshot>,
     ) -> Result<(), AppError>;
     async fn list_original_snapshots(&self) -> Result<Vec<OriginalQuestionSnapshot>, AppError>;
+    async fn list_instrument_definitions(&self) -> Result<Vec<InstrumentDefinition>, AppError>;
+    async fn save_instrument_definition(
+        &self,
+        instrument: SaveInstrumentDefinitionRequest,
+        is_system: bool,
+    ) -> Result<InstrumentDefinition, AppError>;
     async fn record_change(
         &self,
         entity: &str,
@@ -47,6 +54,35 @@ pub trait AutoEvalRepository: Send + Sync {
         summary: &str,
     ) -> Result<(), AppError>;
     async fn list_change_logs(&self, limit: usize) -> Result<Vec<ChangeLogEntry>, AppError>;
+    async fn list_collaboration_locks(&self) -> Result<Vec<CollaborationLock>, AppError>;
+    async fn get_collaboration_lock(
+        &self,
+        resource_type: CollaborationResourceType,
+        resource_id: &str,
+    ) -> Result<Option<CollaborationLock>, AppError>;
+    async fn list_collaboration_locks_for_resources(
+        &self,
+        resource_type: CollaborationResourceType,
+        resource_ids: &[String],
+    ) -> Result<Vec<CollaborationLock>, AppError>;
+    async fn heartbeat_collaboration_presence(
+        &self,
+        editor_name: &str,
+    ) -> Result<CollaborationPresence, AppError>;
+    async fn list_collaboration_presence(&self) -> Result<Vec<CollaborationPresence>, AppError>;
+    async fn acquire_collaboration_lock(
+        &self,
+        resource_type: CollaborationResourceType,
+        resource_id: &str,
+        editor_name: &str,
+        ttl_seconds: i64,
+    ) -> Result<CollaborationLock, AppError>;
+    async fn release_collaboration_lock(
+        &self,
+        resource_type: CollaborationResourceType,
+        resource_id: &str,
+        editor_name: &str,
+    ) -> Result<(), AppError>;
     async fn create_history_snapshot(
         &self,
         summary: &str,

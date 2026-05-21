@@ -4,15 +4,19 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "node scripts/tauri-with-env.mjs dev",
+    "dev:web": "vite",
     "build": "bunx tsr generate && tsc && vite build",
-    "build:mac": "tauri build --bundles app,dmg",
-    "build:mac:universal": "tauri build --target universal-apple-darwin --bundles app,dmg",
-    "build:windows:msi": "tauri build --bundles msi",
-    "build:windows:nsis": "tauri build --bundles nsis",
+    "dev:tauri": "node scripts/tauri-with-env.mjs dev",
+    "build:tauri": "node scripts/tauri-with-env.mjs build",
+    "build:mac": "node scripts/tauri-with-env.mjs build --bundles app,dmg",
+    "build:mac:universal": "node scripts/tauri-with-env.mjs build --target universal-apple-darwin --bundles app,dmg",
+    "build:windows:msi": "node scripts/tauri-with-env.mjs build --bundles msi",
+    "build:windows:nsis": "node scripts/tauri-with-env.mjs build --bundles nsis",
+    "build:windows:nsis:cross": "node scripts/tauri-with-env.mjs build --runner cargo-xwin --target x86_64-pc-windows-msvc --bundles nsis",
     "preview": "vite preview",
     "routes:generate": "bunx tsr generate",
-    "tauri": "tauri"
+    "tauri": "node scripts/tauri-with-env.mjs"
   },
   "dependencies": {
     "@radix-ui/react-accordion": "^1.2.12",

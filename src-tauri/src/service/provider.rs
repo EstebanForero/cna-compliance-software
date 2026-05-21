@@ -5,8 +5,8 @@ use docx_rs::{Docx, Paragraph, Pic, Run, Shading, ShdType, Table, TableCell, Tab
 
 use crate::audience::{provider_instrument_key, provider_instrument_label};
 use crate::domain::{
-    ExportProviderReviewDocxRequest, NewProviderLink, ProviderLink, ProviderQuestionReview,
-    ProviderQuestionReviewItem, ResetProviderQuestionReviewsRequest,
+    ExportProviderReviewDocxRequest, InstrumentDefinition, NewProviderLink, ProviderLink,
+    ProviderQuestionReview, ProviderQuestionReviewItem, ResetProviderQuestionReviewsRequest,
     ResetProviderQuestionReviewsResult, SaveProviderQuestionReviewRequest,
 };
 use crate::error::AppError;
@@ -34,6 +34,8 @@ impl AutoEvaluationService {
         &self,
     ) -> Result<Vec<ProviderQuestionReviewItem>, AppError> {
         let questions = self.repository.list_questions().await?;
+        let instruments = self.repository.list_instrument_definitions().await?;
+        let instrument_map = provider_instrument_map(&instruments);
         let reviews = self.repository.list_provider_question_reviews().await?;
         let mut by_question_and_instrument = std::collections::HashMap::new();
         let mut legacy_by_question = std::collections::HashMap::new();
@@ -51,10 +53,14 @@ impl AutoEvaluationService {
             let audiences = if question.audiences.is_empty() {
                 vec!["Sin instrumento".to_string()]
             } else {
-                provider_instruments_for_question(&question.audiences)
+                provider_instruments_for_question(&question.audiences, &instrument_map)
             };
             for instrument in audiences {
-                let label = provider_instrument_label(&instrument);
+                let label = instruments
+                    .iter()
+                    .find(|definition| definition.key == instrument)
+                    .map(|definition| definition.label.clone())
+                    .unwrap_or_else(|| provider_instrument_label(&instrument));
                 let review = by_question_and_instrument
                     .get(&(question.id.clone(), instrument.clone()))
                     .cloned()
@@ -404,13 +410,34 @@ fn is_supported_image_path(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
-fn provider_instruments_for_question(values: &[String]) -> Vec<String> {
+fn provider_instruments_for_question(
+    values: &[String],
+    instrument_map: &std::collections::BTreeMap<String, String>,
+) -> Vec<String> {
     let mut instruments = BTreeSet::new();
     for value in values {
-        let instrument = provider_instrument_key(value);
+        let public = provider_instrument_key(value);
+        let parsed = crate::audience::InstrumentAudience::parse(value);
+        let instrument = instrument_map
+            .get(&parsed.column)
+            .or_else(|| instrument_map.get(&public))
+            .cloned()
+            .unwrap_or(public);
         if !instrument.is_empty() {
             instruments.insert(instrument);
         }
     }
     instruments.into_iter().collect()
+}
+
+fn provider_instrument_map(
+    definitions: &[InstrumentDefinition],
+) -> std::collections::BTreeMap<String, String> {
+    let mut map = std::collections::BTreeMap::new();
+    for definition in definitions {
+        for public in &definition.public_keys {
+            map.insert(public.clone(), definition.key.clone());
+        }
+    }
+    map
 }

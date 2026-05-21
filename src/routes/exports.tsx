@@ -1,7 +1,7 @@
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { Download, FileCheck2 } from "lucide-react";
+import { CheckCircle2, Download, FileCheck2 } from "lucide-react";
 import { useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
@@ -13,6 +13,13 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   Select,
   SelectContent,
@@ -28,6 +35,7 @@ export const Route = createFileRoute("/exports")({
 
 function ExportsPage() {
   const [selectedPublic, setSelectedPublic] = useState("all");
+  const [successDialogOpen, setSuccessDialogOpen] = useState(false);
   const baseline = useQuery({
     queryKey: ["baseline-status"],
     queryFn: api.baselineStatus,
@@ -36,7 +44,12 @@ function ExportsPage() {
     queryKey: ["instrument-public-options"],
     queryFn: api.instrumentPublicOptions,
   });
-  const exportWorkbook = useMutation({ mutationFn: api.exportWorkbook });
+  const exportWorkbook = useMutation({
+    mutationFn: api.exportWorkbook,
+    onSuccess: () => {
+      setSuccessDialogOpen(true);
+    },
+  });
   const publicOptions = instrumentPublics.data ?? [];
 
   async function chooseExportPath() {
@@ -64,6 +77,39 @@ function ExportsPage() {
 
   return (
     <div className="space-y-6">
+      <Dialog open={successDialogOpen} onOpenChange={setSuccessDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <CheckCircle2 className="size-5 text-primary" />
+              Exportación completada
+            </DialogTitle>
+            <DialogDescription>
+              El archivo o carpeta se generó correctamente en la ruta seleccionada.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="apple-tile p-3 text-sm">
+            <p className="font-medium">
+              {exportWorkbook.data?.kind === "instruments"
+                ? "Instrumentos exportados"
+                : "Consolidado exportado"}
+            </p>
+            <p className="mt-1 break-words text-muted-foreground">
+              {exportWorkbook.data?.path}
+            </p>
+            {exportWorkbook.data ? (
+              <div className="mt-3 grid gap-2 text-xs sm:grid-cols-3">
+                <ExportStat label="Agregadas" value={exportWorkbook.data.addedQuestions} />
+                <ExportStat label="Modificadas" value={exportWorkbook.data.modifiedQuestions} />
+                <ExportStat label="Eliminadas" value={exportWorkbook.data.removedQuestions} />
+              </div>
+            ) : null}
+          </div>
+          <Button type="button" onClick={() => setSuccessDialogOpen(false)}>
+            Listo
+          </Button>
+        </DialogContent>
+      </Dialog>
       <section className="apple-hero p-6 md:p-8">
         <div className="flex flex-col justify-between gap-4 md:flex-row md:items-end">
           <div>
@@ -224,6 +270,15 @@ function Legend({ color, label }: { color: string; label: string }) {
     <div className="flex items-center gap-3 rounded-lg border bg-background/55 p-3 text-sm">
       <span className={`size-4 rounded-sm ${color}`} />
       {label}
+    </div>
+  );
+}
+
+function ExportStat({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="rounded-lg border bg-background/60 p-2">
+      <p className="text-muted-foreground">{label}</p>
+      <p className="mt-1 text-base font-semibold">{value}</p>
     </div>
   );
 }

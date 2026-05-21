@@ -8,6 +8,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Progress } from "@/components/ui/progress";
 
 type EmptyWorkspaceImportDialogProps = {
   open: boolean;
@@ -41,6 +42,15 @@ export function EmptyWorkspaceImportDialog({
             La app no crea factores por defecto. La lista se construye con el Excel
             importado o con los lineamientos que agregue manualmente despues.
           </div>
+          {importing ? (
+            <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900 dark:border-blue-400/30 dark:bg-blue-950/60 dark:text-blue-100">
+              <div className="mb-2 flex items-center justify-between gap-3">
+                <span className="font-medium">Importando consolidado</span>
+                <span className="text-xs">Leyendo hojas y guardando datos</span>
+              </div>
+              <Progress value={68} className="bg-blue-100 dark:bg-blue-900" />
+            </div>
+          ) : null}
           <div className="grid gap-2 sm:grid-cols-3">
             <Button
               className="glass-action border-0 sm:col-span-2"

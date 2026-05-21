@@ -1,8 +1,9 @@
 import type { QueryClient } from "@tanstack/react-query";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, Outlet, createRootRouteWithContext } from "@tanstack/react-router";
 import {
   ClipboardCheck,
+  Cloud,
   Database,
   FileSpreadsheet,
   BookOpen,
@@ -18,6 +19,7 @@ import {
 import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { OnboardingGate } from "@/components/onboarding-gate";
 import { api } from "@/lib/api";
 import { useTheme } from "@/lib/theme";
@@ -35,7 +37,7 @@ const navigation = [
   { to: "/exports", label: "Exportar", icon: FileSpreadsheet },
   { to: "/history", label: "Historial", icon: Clock3 },
   { to: "/provider", label: "Proveedor", icon: LinkIcon },
-  { to: "/workspace", label: "Workspace", icon: Settings },
+  { to: "/workspace", label: "Configuración", icon: Settings },
   { to: "/docs", label: "Docs", icon: BookOpen },
 ] as const;
 
@@ -47,6 +49,25 @@ function RootLayout() {
   const { theme, toggleTheme } = useTheme();
   const queryClient = useQueryClient();
   const [saveNotice, setSaveNotice] = useState("");
+  const workspace = useQuery({
+    queryKey: ["workspace"],
+    queryFn: api.workspace,
+    refetchInterval: 30000,
+  });
+  const connected = Boolean(workspace.data?.tursoConnected);
+  const presence = useQuery({
+    queryKey: ["collaboration-presence"],
+    queryFn: api.heartbeatCollaborationPresence,
+    enabled: connected && Boolean(workspace.data?.editorProfile),
+    refetchInterval: 30000,
+  });
+  const currentEditor = workspace.data?.editorProfile?.fullName ?? "";
+  const otherEditors = (presence.data ?? []).filter(
+    (item) => item.editorName !== currentEditor,
+  );
+  const connectionLabel = connected
+    ? summarizeTursoWorkspace(workspace.data?.tursoDatabaseUrl)
+    : "Los cambios se guardan en esta base local.";
   const saveHistory = useMutation({
     mutationFn: api.saveManualHistorySnapshot,
     onSuccess: async () => {
@@ -67,7 +88,9 @@ function RootLayout() {
             </div>
             <div>
               <p className="text-sm font-semibold">Autoevaluacion CNA</p>
-              <p className="text-xs text-muted-foreground">Fuente unica local</p>
+              <p className="text-xs text-muted-foreground">
+                {connected ? "Fuente unica colaborativa" : "Fuente unica local"}
+              </p>
             </div>
           </div>
           <nav className="space-y-1">
@@ -92,6 +115,42 @@ function RootLayout() {
             ))}
           </nav>
           <div className="mt-auto space-y-2 border-t pt-4">
+            <div
+              className={cn(
+                "rounded-lg border p-3 text-xs shadow-sm",
+                connected
+                  ? "border-blue-300 bg-blue-50 text-blue-950 dark:border-blue-400/30 dark:bg-blue-950/70 dark:text-blue-100"
+                  : "border-border bg-background/80 text-foreground",
+              )}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className="flex items-center gap-2 font-semibold text-blue-950 dark:text-blue-100">
+                  <Cloud className="size-4 text-blue-700 dark:text-blue-200" />
+                  {connected ? "Conectado" : "Desconectado"}
+                </span>
+                <Badge
+                  variant={connected ? "secondary" : "outline"}
+                  className={cn(
+                    connected &&
+                      "border-blue-200 bg-white/80 text-blue-800 dark:border-blue-400/30 dark:bg-blue-900/80 dark:text-blue-100",
+                  )}
+                >
+                  {connected ? "Turso" : "Local"}
+                </Badge>
+              </div>
+              <p className="mt-2 text-[11px] leading-5 text-blue-800 dark:text-blue-200">
+                {connectionLabel}
+              </p>
+              {connected ? (
+                <p className="mt-2 font-medium text-blue-900 dark:text-blue-100">
+                  {otherEditors.length > 0
+                    ? `${otherEditors.length} editor(es) activo(s): ${otherEditors
+                        .map((item) => item.editorName)
+                        .join(", ")}`
+                    : "No hay otros editores activos ahora."}
+                </p>
+              ) : null}
+            </div>
             <Button
               className="w-full justify-start bg-blue-600 text-white hover:bg-blue-700"
               onClick={() => saveHistory.mutate()}
@@ -111,7 +170,9 @@ function RootLayout() {
         <div className="flex items-center justify-between gap-3">
           <div>
             <p className="text-sm font-semibold">Autoevaluacion CNA</p>
-            <p className="text-xs text-muted-foreground">Fuente unica local</p>
+            <p className="text-xs text-muted-foreground">
+              {connected ? "Conectado a Turso" : "Modo local"}
+            </p>
           </div>
           <nav className="flex gap-1">
             <Button
@@ -138,11 +199,23 @@ function RootLayout() {
       </header>
 
         <main className="md:pl-64">
-          <div className="mx-auto max-w-7xl px-4 py-6 md:px-8">
+          <div className="mx-auto max-w-none px-3 py-5 md:px-4 lg:px-5">
             <Outlet />
           </div>
         </main>
       </div>
     </OnboardingGate>
   );
+}
+
+function summarizeTursoWorkspace(databaseUrl?: string | null) {
+  if (!databaseUrl) return "Base Turso remota activa.";
+
+  try {
+    const host = new URL(databaseUrl).host;
+    const database = host.split(".")[0]?.split("-")[0]?.trim();
+    return database ? `Base Turso activa: ${database}` : "Base Turso remota activa.";
+  } catch {
+    return "Base Turso remota activa.";
+  }
 }

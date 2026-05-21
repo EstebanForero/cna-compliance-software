@@ -275,6 +275,7 @@ pub struct NewQuestion {
 pub struct UpdateQuestionRequest {
     pub question_id: String,
     pub question: NewQuestion,
+    pub expected_updated_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -430,6 +431,36 @@ pub struct InstrumentPublicOption {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub struct InstrumentDefinition {
+    pub id: String,
+    pub key: String,
+    pub label: String,
+    pub public_keys: Vec<String>,
+    pub public_labels: Vec<String>,
+    pub is_system: bool,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveInstrumentDefinitionRequest {
+    pub id: Option<String>,
+    pub label: String,
+    pub public_keys: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AvailableInstrumentPublic {
+    pub key: String,
+    pub label: String,
+    pub subpublics: Vec<String>,
+    pub assigned_instrument_id: Option<String>,
+    pub assigned_instrument_label: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct ExportWorkbookResult {
     pub path: String,
     pub kind: ExportKind,
@@ -452,10 +483,12 @@ pub enum QuestionDiffKind {
 pub struct WorkspaceStatus {
     pub database_path: String,
     pub configured_onedrive_path: Option<String>,
+    pub turso_database_url: Option<String>,
     pub microsoft_account: Option<MicrosoftAccount>,
     pub microsoft_auth_config: Option<MicrosoftAuthConfig>,
     pub editor_profile: Option<EditorProfile>,
     pub graph_sync_available: bool,
+    pub turso_connected: bool,
     pub has_questions: bool,
 }
 
@@ -512,6 +545,13 @@ pub struct SyncResult {
 #[serde(rename_all = "camelCase")]
 pub struct ConfigureWorkspaceRequest {
     pub folder_path: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfigureTursoWorkspaceRequest {
+    pub database_url: String,
+    pub auth_token: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -593,6 +633,70 @@ pub struct ChangeLogEntry {
     pub editor_name: String,
     pub summary: String,
     pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum CollaborationResourceType {
+    Question,
+    GuidelineAspect,
+    InstrumentDefinition,
+}
+
+impl CollaborationResourceType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Question => "question",
+            Self::GuidelineAspect => "guideline_aspect",
+            Self::InstrumentDefinition => "instrument_definition",
+        }
+    }
+
+    pub fn from_str(value: &str) -> Self {
+        match value {
+            "guideline_aspect" => Self::GuidelineAspect,
+            "instrument_definition" => Self::InstrumentDefinition,
+            _ => Self::Question,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CollaborationLock {
+    pub resource_type: CollaborationResourceType,
+    pub resource_id: String,
+    pub editor_name: String,
+    pub locked_until: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CollaborationPresence {
+    pub editor_name: String,
+    pub last_seen_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AcquireCollaborationLockRequest {
+    pub resource_type: CollaborationResourceType,
+    pub resource_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CollaborationLocksForResourcesRequest {
+    pub resource_type: CollaborationResourceType,
+    pub resource_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ReleaseCollaborationLockRequest {
+    pub resource_type: CollaborationResourceType,
+    pub resource_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

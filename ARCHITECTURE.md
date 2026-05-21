@@ -3,6 +3,7 @@
 ## Core Boundaries
 
 - **Workspace:** local configuration, editor profile, database location, OneDrive folder sync and Microsoft Graph app-folder sync.
+- **Live Collaboration:** optional Turso Cloud workspace where all editors use the same libSQL database with short-lived edit locks and optimistic conflict detection.
 - **Import:** reads Excel consolidated workbooks, merges compatible sheets, forward-fills CNA hierarchy cells, deduplicates questions by code and lineamientos by CNA hierarchy.
 - **CNA Model:** Factor -> Caracteristica -> Aspecto hierarchy. CNA factors ship with known presets, but factor codes/names are data-driven so future lineamientos can add factors without a Rust release. Aspect codes are internal keys: imported values are normalized and manual aspects get deterministic generated keys.
 - **Question Bank:** current editable source of truth for questions, audiences, operational status and justification.
@@ -43,6 +44,9 @@
   - `Por orden`: question-order view, with one column per subpublic.
   - `Convención`: readable mapping for imported convention codes and question formats.
 - Instrument públicos are derived by the backend from the same grouping used by the exporter, not from independent frontend parsing. This prevents the UI from offering públicos that cannot be exported.
+- Instruments are first-class definitions in the database. On import, the backend detects instrument definitions from the públicos present in the consolidated workbook and seeds the historical workbook groups seen in the examples: Administrativos, Directivos, Estudiantes, Profesores de cátedra and Profesores de planta when those públicos exist.
+- Users can create or edit instrument definitions and assign públicos to them. Público assignment is exclusive: one público key can belong to only one instrument at a time, enforced by the database.
+- Custom instruments can group multiple públicos into one exported workbook. The workbook still contains subpúblico columns, and question membership is calculated from the assigned público keys.
 - The consolidated workbook stores público and tipo de público separately. Instruments collapse that into one workbook per main público and subpublic columns. Example: `0Estudiantes + 00Pregrado` becomes the `Estudiantes` workbook with an `Estudiantes Pregrado` column; `1Profesores_Planta + 10Pregrado` becomes the `Profesores de planta` workbook with a `Profesores Pregrado` column.
 - Instrument display labels follow the historical templates: `Maestrías` is displayed as `Maestría`, `Maestrías virtuales` as `Maestría Virtual`, `Especializaciones MQ` as `EMQ`, and `Especializaciones virtuales/extensión` as `Especializaciones virtual / extensión`.
 - Público/subpúblico normalization is centralized in the Rust audience module and shared by import, export and provider review. Frontend screens consume backend-derived options instead of reimplementing these rules.
@@ -64,8 +68,19 @@
 - The app can still work from a user-selected OneDrive/synced folder when the user wants the database file to live outside the default app data directory.
 - `.acna` is the portable exchange format for a complete working database, including current questions, lineamientos, baseline snapshots, history snapshots, provider reviews, change logs and source document records.
 - Opening a `.acna` file directly launches the app with that package as the active database.
-- Installers register `.acna` as an Autoevaluacion CNA file association. Windows targets are configured for MSI/NSIS; Linux targets are configured for deb/rpm/AppImage.
+- Installers register `.acna` as an Autoevaluacion CNA file association. Windows targets are configured for MSI/NSIS; Linux targets are configured for deb/rpm/AppImage. `bun run build:windows:msi` and `bun run build:windows:nsis` are the native Windows build commands. On Linux/Arch, NSIS cross-builds use `bun run build:windows:nsis:cross` with `cargo-xwin` and the `x86_64-pc-windows-msvc` target; MSI still requires a Windows host.
 - The app uses an explicit Content Security Policy instead of a null CSP. Frontend access stays limited to local Tauri IPC plus the Microsoft login and Graph endpoints required for sync.
+
+## Collaboration Rules
+
+- Turso Cloud is the recommended/default sync mode. It connects the repository directly to a remote `libsql://` database; OneDrive and Microsoft Graph are secondary backup/copy flows.
+- Turso URL/token can be provided in the Workspace screen, runtime environment variables, or build-time environment variables embedded into the installer (`AUTOCNA_TURSO_DATABASE_URL` / `AUTOCNA_TURSO_AUTH_TOKEN`, with `TURSO_DATABASE_URL` / `TURSO_AUTH_TOKEN` also accepted). Desktop dev and installer builds all go through `scripts/tauri-with-env.mjs`, which loads local `.env.build`; `.env.build` is ignored by git and `.env.build.example` documents the required keys. `bun run dev`, `bun run dev:tauri`, `bun run build:windows:msi` and `bun run build:windows:nsis` therefore use the same Turso defaults.
+- The token must be rotated if it is pasted into chat, committed, or shared in an installer package.
+- In Turso mode, question and lineamiento screens poll for fresh data every few seconds so edits from other users appear without manual reload.
+- Editing a question first checks for an active `question` collaboration lock. If another editor owns it, the table shows that editor's name and the edit action is disabled. If no lock exists, the app acquires a five-minute lock before opening the editor.
+- Backend saves also reject attempts to update a question while another editor owns its lock, so bypassing the UI still cannot overwrite a locked edit.
+- Saving a question sends the `updated_at` value that the editor originally loaded. If another editor saved the question first, the backend rejects the save and asks the user to refresh before trying again.
+- Locks are coordination hints, not permanent permissions. Expired locks are pruned automatically so abandoned sessions do not block the team.
 
 ## Duplicate Prevention
 

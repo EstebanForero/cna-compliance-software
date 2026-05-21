@@ -83,10 +83,17 @@ export const InlineCreateLineamentForm = memo(function InlineCreateLineamentForm
         className="lg:col-span-2"
         value={draft.guidelineTitle}
         onChange={(event) => setDraft({ ...draft, guidelineTitle: event.target.value })}
-        placeholder="Titulo del lineamiento"
+        placeholder="Título del lineamiento o fuente normativa"
       />
       <div className="rounded-lg border bg-background/45 p-3">
-        <p className="text-xs font-semibold uppercase text-muted-foreground">Factor</p>
+        <div className="mb-2">
+          <p className="text-xs font-semibold uppercase text-muted-foreground">
+            1. Factor
+          </p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Elija uno existente o cree uno nuevo. El código se calcula automáticamente.
+          </p>
+        </div>
         <div className="mt-2 grid grid-cols-[1fr_auto] gap-2">
           <Select
             value={draft.factorCode}
@@ -114,8 +121,9 @@ export const InlineCreateLineamentForm = memo(function InlineCreateLineamentForm
           </Select>
           <Dialog open={factorDialogOpen} onOpenChange={setFactorDialogOpen}>
             <DialogTrigger asChild>
-              <Button type="button" variant="outline" size="icon" aria-label="Agregar factor">
+              <Button type="button" variant="outline" aria-label="Agregar factor">
                 <Plus className="size-4" />
+                Crear
               </Button>
             </DialogTrigger>
             <DialogContent>
@@ -154,9 +162,14 @@ export const InlineCreateLineamentForm = memo(function InlineCreateLineamentForm
         </div>
       </div>
       <div className="rounded-lg border bg-background/45 p-3">
-        <p className="text-xs font-semibold uppercase text-muted-foreground">
-          Caracteristica
-        </p>
+        <div className="mb-2">
+          <p className="text-xs font-semibold uppercase text-muted-foreground">
+            2. Característica
+          </p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Depende del factor seleccionado. Puede crear una nueva dentro de ese factor.
+          </p>
+        </div>
         <div className="mt-2 grid grid-cols-[1fr_auto] gap-2">
           <Select
             value={
@@ -213,11 +226,11 @@ export const InlineCreateLineamentForm = memo(function InlineCreateLineamentForm
               <Button
                 type="button"
                 variant="outline"
-                size="icon"
                 aria-label="Agregar caracteristica"
                 disabled={!draft.factorCode}
               >
                 <Plus className="size-4" />
+                Crear
               </Button>
             </DialogTrigger>
             <DialogContent>
@@ -253,12 +266,20 @@ export const InlineCreateLineamentForm = memo(function InlineCreateLineamentForm
           </Dialog>
         </div>
       </div>
-      <Textarea
-        className="lg:col-span-2"
-        value={draft.aspectDescription}
-        onChange={(event) => setDraft({ ...draft, aspectDescription: event.target.value })}
-        placeholder="Descripcion del aspecto por evaluar"
-      />
+      <div className="rounded-lg border bg-background/45 p-3 lg:col-span-2">
+        <p className="text-xs font-semibold uppercase text-muted-foreground">
+          3. Aspecto / lineamiento
+        </p>
+        <p className="mt-1 text-xs text-muted-foreground">
+          Escriba el aspecto evaluable. El código del aspecto se genera al guardar.
+        </p>
+        <Textarea
+          className="mt-2"
+          value={draft.aspectDescription}
+          onChange={(event) => setDraft({ ...draft, aspectDescription: event.target.value })}
+          placeholder="Descripción del aspecto por evaluar"
+        />
+      </div>
       <div className="flex flex-wrap gap-2 lg:col-span-2">
         <Button
           type="button"
@@ -283,7 +304,7 @@ export const InlineCreateLineamentForm = memo(function InlineCreateLineamentForm
           }
         >
           <Plus className="size-4" />
-          Agregar lineamiento
+          Crear aspecto
         </Button>
       </div>
     </form>

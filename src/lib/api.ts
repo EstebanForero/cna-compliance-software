@@ -4,6 +4,12 @@ import type {
   DashboardSummary,
   BaselineStatus,
   ChangeLogEntry,
+  CollaborationLock,
+  CollaborationLocksForResourcesRequest,
+  CollaborationPresence,
+  AcquireCollaborationLockRequest,
+  ReleaseCollaborationLockRequest,
+  ConfigureTursoWorkspaceRequest,
   ConfigureWorkspaceRequest,
   DatabasePackageResult,
   ExportWorkbookRequest,
@@ -16,6 +22,8 @@ import type {
   ImportWorkbookRequest,
   ImportWorkbookPreviewResult,
   ImportWorkbookResult,
+  AvailableInstrumentPublic,
+  InstrumentDefinition,
   InstrumentPublicOption,
   MicrosoftLoginRequest,
   MicrosoftLoginResult,
@@ -40,6 +48,7 @@ import type {
   SaveEvidenceAttachmentResult,
   ExportProviderReviewDocxRequest,
   SaveEditorProfileRequest,
+  SaveInstrumentDefinitionRequest,
   SyncResult,
   UpdateQuestionRequest,
   UpdateGuidelineAspectRequest,
@@ -52,6 +61,8 @@ export const api = {
   workspace: () => invoke<WorkspaceStatus>("get_workspace_status"),
   configureWorkspace: (request: ConfigureWorkspaceRequest) =>
     invoke<WorkspaceStatus>("configure_onedrive_workspace", { request }),
+  configureTursoWorkspace: (request: ConfigureTursoWorkspaceRequest) =>
+    invoke<WorkspaceStatus>("configure_turso_workspace", { request }),
   openDatabase: (request: OpenDatabaseRequest) =>
     invoke<WorkspaceStatus>("open_existing_database", { request }),
   exportDatabasePackage: (request: ExportDatabasePackageRequest) =>
@@ -89,6 +100,12 @@ export const api = {
     invoke<ExportWorkbookResult>("export_workbook", { request }),
   instrumentPublicOptions: () =>
     invoke<InstrumentPublicOption[]>("list_instrument_public_options"),
+  instrumentDefinitions: () =>
+    invoke<InstrumentDefinition[]>("list_instrument_definitions"),
+  availableInstrumentPublics: () =>
+    invoke<AvailableInstrumentPublic[]>("list_available_instrument_publics"),
+  saveInstrumentDefinition: (request: SaveInstrumentDefinitionRequest) =>
+    invoke<InstrumentDefinition>("save_instrument_definition", { request }),
   providerLinks: () => invoke<ProviderLink[]>("list_provider_links"),
   recordProviderLink: (link: NewProviderLink) =>
     invoke<ProviderLink>("record_provider_link", { link }),
@@ -105,6 +122,15 @@ export const api = {
   resetDatabaseData: (request: ResetDatabaseRequest) =>
     invoke<ResetDatabaseResult>("reset_database_data", { request }),
   changeLogs: () => invoke<ChangeLogEntry[]>("list_change_logs"),
+  collaborationLocks: () => invoke<CollaborationLock[]>("list_collaboration_locks"),
+  collaborationLocksForResources: (request: CollaborationLocksForResourcesRequest) =>
+    invoke<CollaborationLock[]>("list_collaboration_locks_for_resources", { request }),
+  heartbeatCollaborationPresence: () =>
+    invoke<CollaborationPresence[]>("heartbeat_collaboration_presence"),
+  acquireCollaborationLock: (request: AcquireCollaborationLockRequest) =>
+    invoke<CollaborationLock>("acquire_collaboration_lock", { request }),
+  releaseCollaborationLock: (request: ReleaseCollaborationLockRequest) =>
+    invoke<void>("release_collaboration_lock", { request }),
   historySnapshots: () => invoke<HistorySnapshot[]>("list_history_snapshots"),
   saveManualHistorySnapshot: () =>
     invoke<HistorySnapshot>("save_manual_history_snapshot"),

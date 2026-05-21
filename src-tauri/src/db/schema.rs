@@ -134,6 +134,23 @@ pub(super) async fn migrate(connection: &Connection) -> Result<(), AppError> {
                 removed_questions INTEGER NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS instrument_definitions (
+                id TEXT PRIMARY KEY,
+                instrument_key TEXT NOT NULL UNIQUE,
+                label TEXT NOT NULL,
+                is_system INTEGER NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS instrument_public_assignments (
+                instrument_id TEXT NOT NULL,
+                public_key TEXT NOT NULL UNIQUE,
+                public_label TEXT NOT NULL,
+                PRIMARY KEY(instrument_id, public_key),
+                FOREIGN KEY(instrument_id) REFERENCES instrument_definitions(id)
+                    ON DELETE CASCADE
+            );
+
             CREATE TABLE IF NOT EXISTS history_snapshots (
                 id TEXT PRIMARY KEY,
                 summary TEXT NOT NULL,
@@ -142,6 +159,26 @@ pub(super) async fn migrate(connection: &Connection) -> Result<(), AppError> {
                 created_at TEXT NOT NULL,
                 snapshot_json TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS collaboration_locks (
+                resource_type TEXT NOT NULL,
+                resource_id TEXT NOT NULL,
+                editor_name TEXT NOT NULL,
+                locked_until TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY(resource_type, resource_id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_collaboration_locks_expiry
+                ON collaboration_locks (locked_until);
+
+            CREATE TABLE IF NOT EXISTS collaboration_presence (
+                editor_name TEXT PRIMARY KEY,
+                last_seen_at TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_collaboration_presence_last_seen
+                ON collaboration_presence (last_seen_at);
 
             DELETE FROM guideline_aspects
              WHERE id NOT IN (

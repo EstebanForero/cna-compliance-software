@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use calamine::{open_workbook_auto, Reader};
+use calamine::{open_workbook_auto, Data, Reader};
 use chrono::{NaiveDate, Utc};
 use mockall::predicate::always;
 use uuid::Uuid;
@@ -174,12 +174,19 @@ async fn create_question_rejects_missing_audience_before_repository_call() {
 #[tokio::test]
 async fn update_question_marks_kept_question_as_modify_when_content_changes() {
     let existing = question(QuestionStatus::Keep, Some("A".into()));
+    let expected_updated_at = existing.updated_at;
     let mut update = new_question_from(&existing);
     update.text = "Texto actualizado".into();
     let mut repository = MockAutoEvalRepository::new();
     repository
         .expect_list_questions()
         .returning(move || Ok(vec![existing.clone()]));
+    repository
+        .expect_get_collaboration_lock()
+        .withf(|resource_type, resource_id| {
+            *resource_type == CollaborationResourceType::Question && resource_id == "q-1"
+        })
+        .returning(|_, _| Ok(None));
     repository
         .expect_create_history_snapshot()
         .returning(|_, _| {
@@ -207,6 +214,7 @@ async fn update_question_marks_kept_question_as_modify_when_content_changes() {
             UpdateQuestionRequest {
                 question_id: "q-1".into(),
                 question: update,
+                expected_updated_at: Some(expected_updated_at),
             },
             "Editor",
         )
@@ -219,11 +227,18 @@ async fn update_question_marks_kept_question_as_modify_when_content_changes() {
 #[tokio::test]
 async fn update_question_noops_when_content_did_not_change() {
     let existing = question(QuestionStatus::Keep, Some("A".into()));
+    let expected_updated_at = existing.updated_at;
     let update = new_question_from(&existing);
     let mut repository = MockAutoEvalRepository::new();
     repository
         .expect_list_questions()
         .returning(move || Ok(vec![existing.clone()]));
+    repository
+        .expect_get_collaboration_lock()
+        .withf(|resource_type, resource_id| {
+            *resource_type == CollaborationResourceType::Question && resource_id == "q-1"
+        })
+        .returning(|_, _| Ok(None));
     repository.expect_create_history_snapshot().never();
     repository.expect_update_question().never();
 
@@ -233,6 +248,7 @@ async fn update_question_noops_when_content_did_not_change() {
             UpdateQuestionRequest {
                 question_id: "q-1".into(),
                 question: update,
+                expected_updated_at: Some(expected_updated_at),
             },
             "Editor",
         )
@@ -245,12 +261,19 @@ async fn update_question_noops_when_content_did_not_change() {
 #[tokio::test]
 async fn update_question_allows_marking_kept_question_for_deletion() {
     let existing = question(QuestionStatus::Keep, Some("A".into()));
+    let expected_updated_at = existing.updated_at;
     let mut update = new_question_from(&existing);
     update.status = QuestionStatus::Delete;
     let mut repository = MockAutoEvalRepository::new();
     repository
         .expect_list_questions()
         .returning(move || Ok(vec![existing.clone()]));
+    repository
+        .expect_get_collaboration_lock()
+        .withf(|resource_type, resource_id| {
+            *resource_type == CollaborationResourceType::Question && resource_id == "q-1"
+        })
+        .returning(|_, _| Ok(None));
     repository
         .expect_create_history_snapshot()
         .returning(|_, _| {
@@ -278,6 +301,7 @@ async fn update_question_allows_marking_kept_question_for_deletion() {
             UpdateQuestionRequest {
                 question_id: "q-1".into(),
                 question: update,
+                expected_updated_at: Some(expected_updated_at),
             },
             "Editor",
         )
@@ -316,6 +340,9 @@ async fn provider_review_items_are_split_by_instrument_audience() {
     repository
         .expect_list_questions()
         .returning(move || Ok(vec![base_question.clone()]));
+    repository
+        .expect_list_instrument_definitions()
+        .returning(|| Ok(vec![]));
     repository
         .expect_list_provider_question_reviews()
         .returning(|| {
@@ -366,6 +393,9 @@ async fn provider_review_groups_subpublics_under_exported_instrument() {
     repository
         .expect_list_questions()
         .returning(move || Ok(vec![public_question.clone(), subpublic_question.clone()]));
+    repository
+        .expect_list_instrument_definitions()
+        .returning(|| Ok(vec![]));
     repository
         .expect_list_provider_question_reviews()
         .returning(|| Ok(vec![]));
@@ -495,6 +525,27 @@ async fn imports_and_exports_consolidated_workbook_without_losing_structure() {
         .await
         .unwrap();
 
+    assert_eq!(
+        worksheet_row_strings(&export_path, "BASEvs3", 0, 15),
+        vec![
+            "N° Factor",
+            "Descripción Factor",
+            "N° Característica",
+            "Nombre característica",
+            "Descripción Característica",
+            "N° Aspecto",
+            "Descripción Aspecto",
+            "Tipo pregunta",
+            "Estado pregunta",
+            "Convención opción de respuesta",
+            "N° pregunta",
+            "Pregunta",
+            "Público",
+            "Tipo de público",
+            "Observaciones",
+        ]
+    );
+
     let exported = parse_questions_workbook(&export_path).unwrap();
     assert_eq!(exported.questions.len(), imported_questions.len());
     assert_eq!(
@@ -521,7 +572,7 @@ async fn imports_and_exports_consolidated_workbook_without_losing_structure() {
     let instrument_options = service.list_instrument_public_options().await.unwrap();
     let estudiantes = instrument_options
         .iter()
-        .find(|option| option.public == "Estudiantes")
+        .find(|option| option.label == "Estudiantes")
         .unwrap();
     assert_eq!(estudiantes.label, "Estudiantes");
     assert!(estudiantes
@@ -530,7 +581,7 @@ async fn imports_and_exports_consolidated_workbook_without_losing_structure() {
         .any(|value| value == "Estudiantes Maestría Virtual"));
     let profesores = instrument_options
         .iter()
-        .find(|option| option.public == "Profesores Planta")
+        .find(|option| option.label == "Profesores de planta")
         .unwrap();
     assert_eq!(profesores.label, "Profesores de planta");
     assert!(profesores
@@ -587,6 +638,14 @@ async fn imports_and_exports_consolidated_workbook_without_losing_structure() {
         order.get_value((2, 0)).map(|value| value.to_string()),
         Some("# Pregunta".into())
     );
+    assert_eq!(
+        order.get_value((2, 1)).map(|value| value.to_string()),
+        Some("Factor #".into())
+    );
+    assert_eq!(
+        order.get_value((2, 7)).map(|value| value.to_string()),
+        Some("Convencion opcion de respuesta".into())
+    );
     let header_values = (0..16)
         .filter_map(|column| order.get_value((2, column)))
         .map(|value| value.to_string())
@@ -601,6 +660,143 @@ async fn imports_and_exports_consolidated_workbook_without_losing_structure() {
     let _ = std::fs::remove_file(export_path);
     let _ = std::fs::remove_dir_all(all_instruments_path);
     let _ = std::fs::remove_dir_all(instrument_path);
+}
+
+#[tokio::test]
+async fn imported_consolidated_exports_match_independent_sample_instruments() {
+    let example_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../example-files");
+    let input_path = example_dir.join("Consolidado de preguntas Enc de Aut Ins y Pr 2024 1.xlsx");
+    if !input_path.exists() {
+        return;
+    }
+
+    let sample_paths = [
+        example_dir.join("Instrumento final administrativos.xlsx"),
+        example_dir.join("Instrumento final directivos.xlsx"),
+        example_dir.join("Instrumento final estudiantes 1.xlsx"),
+        example_dir.join("Instrumento final profesores cátedra VF.xlsx"),
+        example_dir.join("Instrumento final profesores planta VF 1.xlsx"),
+    ]
+    .into_iter()
+    .filter(|path| path.exists())
+    .collect::<Vec<_>>();
+    if sample_paths.is_empty() {
+        return;
+    }
+    let expected_sample_codes_by_key = sample_paths
+        .iter()
+        .map(|path| {
+            (
+                instrument_title_key(path),
+                instrument_order_question_codes(path),
+            )
+        })
+        .collect::<std::collections::BTreeMap<_, _>>();
+
+    let repository = Arc::new(LibSqlAutoEvalRepository::open_in_memory().await.unwrap());
+    let service = AutoEvaluationService::new(repository.clone());
+    let import_result = service
+        .import_workbook(
+            ImportWorkbookRequest {
+                path: input_path.to_string_lossy().into_owned(),
+                cycle_name: Some("Instrument regression".into()),
+            },
+            "Test Editor",
+        )
+        .await
+        .unwrap();
+    let imported_questions = repository.list_questions().await.unwrap();
+    let imported_codes_by_key = imported_instrument_question_codes_by_key(&imported_questions);
+    for (sample_key, sample_codes) in &expected_sample_codes_by_key {
+        let imported_codes = imported_codes_by_key.get(sample_key).unwrap_or_else(|| {
+            panic!(
+                "imported consolidated did not produce instrument key {sample_key}; imported keys: {:?}",
+                imported_codes_by_key.keys().collect::<Vec<_>>()
+            )
+        });
+        let missing_from_import = sample_codes
+            .difference(imported_codes)
+            .cloned()
+            .collect::<Vec<_>>();
+        assert!(
+            missing_from_import.is_empty(),
+            "imported consolidated is missing sample rows for {sample_key}: {missing_from_import:?}"
+        );
+    }
+
+    service
+        .mark_original_baseline(
+            MarkOriginalBaselineRequest {
+                source_document_id: Some(import_result.source_document_id),
+                confirmation_text: "FIJAR ORIGINAL".into(),
+                acknowledge_replacement: true,
+                acknowledge_backup: true,
+            },
+            "Test Editor",
+        )
+        .await
+        .unwrap();
+
+    let export_dir = std::env::temp_dir().join(format!(
+        "autoevaluacion-sample-instruments-{}",
+        Uuid::new_v4()
+    ));
+    service
+        .export_workbook(ExportWorkbookRequest {
+            path: export_dir.to_string_lossy().into_owned(),
+            kind: ExportKind::Instruments,
+            instrument_public: None,
+        })
+        .await
+        .unwrap();
+
+    let mut exported_by_key = std::collections::BTreeMap::new();
+    for entry in std::fs::read_dir(&export_dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.extension().and_then(|value| value.to_str()) != Some("xlsx") {
+            continue;
+        }
+        exported_by_key.insert(instrument_title_key(&path), path);
+    }
+
+    for (sample_key, sample_codes) in expected_sample_codes_by_key {
+        let exported_path = exported_by_key.get(&sample_key).unwrap_or_else(|| {
+            panic!(
+                "missing exported instrument for independent sample key {sample_key}; exported keys: {:?}",
+                exported_by_key.keys().collect::<Vec<_>>()
+            )
+        });
+        let exported_codes = instrument_order_question_codes(exported_path);
+        assert!(
+            sample_codes.len() > 1,
+            "independent sample instrument {sample_key} did not expose question rows"
+        );
+        let missing = sample_codes
+            .difference(&exported_codes)
+            .cloned()
+            .collect::<Vec<_>>();
+        assert!(
+            missing.is_empty(),
+            "exported instrument {:?} is missing sample question rows {missing:?}",
+            exported_path.file_name()
+        );
+        assert!(
+            exported_codes.len() >= sample_codes.len(),
+            "exported instrument {:?} has fewer question rows than the sample",
+            exported_path.file_name()
+        );
+        assert!(
+            exported_codes.iter().all(|code| !code.starts_with("IMP-")),
+            "exported instrument {:?} contains generated fallback question codes: {:?}",
+            exported_path.file_name(),
+            exported_codes
+                .iter()
+                .filter(|code| code.starts_with("IMP-"))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    let _ = std::fs::remove_dir_all(export_dir);
 }
 
 #[tokio::test]
@@ -666,10 +862,12 @@ fn workspace() -> WorkspaceStatus {
     WorkspaceStatus {
         database_path: "/tmp/autoevaluacion-cna.db".into(),
         configured_onedrive_path: None,
+        turso_database_url: None,
         microsoft_account: None,
         microsoft_auth_config: None,
         editor_profile: None,
         graph_sync_available: false,
+        turso_connected: false,
         has_questions: true,
     }
 }
@@ -723,4 +921,147 @@ fn factor_characteristic_set_from_persisted(
             )
         })
         .collect()
+}
+
+fn instrument_title_key(path: &std::path::Path) -> String {
+    let mut workbook = open_workbook_auto(path).unwrap();
+    let sheet_name = workbook
+        .sheet_names()
+        .iter()
+        .find(|sheet| sheet.to_lowercase().contains("orden"))
+        .cloned()
+        .or_else(|| workbook.sheet_names().first().cloned())
+        .unwrap();
+    let range = workbook.worksheet_range(&sheet_name).unwrap();
+    let title = range
+        .rows()
+        .take(4)
+        .flat_map(|row| row.iter())
+        .map(|cell| cell_text(Some(cell)))
+        .find(|value| value.to_uppercase().contains("INSTRUMENTO"))
+        .unwrap_or_else(|| path.file_stem().unwrap().to_string_lossy().into_owned());
+    let normalized = title
+        .to_uppercase()
+        .replace('Á', "A")
+        .replace('É', "E")
+        .replace('Í', "I")
+        .replace('Ó', "O")
+        .replace('Ú', "U");
+    if normalized.contains("ADMINISTRATIVOS") {
+        "administrativos".into()
+    } else if normalized.contains("DIRECTIVOS") {
+        "directivos".into()
+    } else if normalized.contains("ESTUDIANTES") {
+        "estudiantes".into()
+    } else if normalized.contains("CATEDRA") {
+        "profesores-catedra".into()
+    } else if normalized.contains("PLANTA") {
+        "profesores-planta".into()
+    } else {
+        normalized
+    }
+}
+
+fn imported_instrument_question_codes_by_key(
+    questions: &[Question],
+) -> std::collections::BTreeMap<String, BTreeSet<String>> {
+    let mut result = std::collections::BTreeMap::<String, BTreeSet<String>>::new();
+    for question in questions {
+        for audience in &question.audiences {
+            let public = crate::audience::InstrumentAudience::parse(audience).public;
+            result
+                .entry(instrument_key_from_public(&public))
+                .or_default()
+                .insert(question.code.clone());
+        }
+    }
+    result
+}
+
+fn instrument_key_from_public(public: &str) -> String {
+    match public {
+        "Administrativos" => "administrativos".into(),
+        "Directivos" => "directivos".into(),
+        "Estudiantes" => "estudiantes".into(),
+        "Profesores Cátedra" | "Profesores Catedra" => "profesores-catedra".into(),
+        "Profesores Planta" => "profesores-planta".into(),
+        value => value.to_lowercase().replace(' ', "-"),
+    }
+}
+
+fn instrument_order_question_codes(path: &std::path::Path) -> BTreeSet<String> {
+    let mut workbook = open_workbook_auto(path).unwrap();
+    let sheet_name = workbook
+        .sheet_names()
+        .iter()
+        .find(|sheet| sheet.to_lowercase().contains("orden"))
+        .cloned()
+        .unwrap_or_else(|| {
+            panic!(
+                "instrument {:?} does not have an order sheet; sheets: {:?}",
+                path.file_name(),
+                workbook.sheet_names()
+            )
+        });
+    let range = workbook.worksheet_range(&sheet_name).unwrap();
+    range
+        .rows()
+        .filter_map(|row| {
+            let code = normalize_question_code(&cell_text(row.first()));
+            let normalized_code = code.to_uppercase();
+            if code.is_empty()
+                || normalized_code.contains("PREGUNTA")
+                || normalized_code.contains("INSTRUMENTO")
+            {
+                return None;
+            }
+            let has_question_text =
+                row.iter()
+                    .skip(1)
+                    .map(|cell| cell_text(Some(cell)))
+                    .any(|value| {
+                        value
+                            .chars()
+                            .filter(|character| !character.is_whitespace())
+                            .count()
+                            > 20
+                    });
+            has_question_text.then_some(code)
+        })
+        .collect()
+}
+
+fn worksheet_row_strings(
+    path: &std::path::Path,
+    sheet_name: &str,
+    row_index: usize,
+    width: usize,
+) -> Vec<String> {
+    let mut workbook = open_workbook_auto(path).unwrap();
+    let range = workbook.worksheet_range(sheet_name).unwrap();
+    let row = range.rows().nth(row_index).unwrap_or(&[]);
+    (0..width)
+        .map(|column| cell_text(row.get(column)))
+        .collect()
+}
+
+fn normalize_question_code(value: &str) -> String {
+    value
+        .trim()
+        .trim_end_matches(".0")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn cell_text(cell: Option<&Data>) -> String {
+    match cell {
+        Some(Data::String(value)) => value.trim().to_string(),
+        Some(Data::Float(value)) if value.fract() == 0.0 => format!("{value:.0}"),
+        Some(Data::Float(value)) => value.to_string(),
+        Some(Data::Int(value)) => value.to_string(),
+        Some(Data::Bool(value)) => value.to_string(),
+        Some(other) => other.to_string().trim().to_string(),
+        None => String::new(),
+    }
 }

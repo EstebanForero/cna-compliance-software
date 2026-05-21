@@ -3,7 +3,8 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::domain::{
-    normalize_aspect_code, ChangeLogEntry, DashboardSummary, DeleteGuidelineAspectRequest,
+    normalize_aspect_code, ChangeLogEntry, CollaborationLock, CollaborationPresence,
+    CollaborationResourceType, DashboardSummary, DeleteGuidelineAspectRequest,
     DeleteGuidelineAspectResult, DeleteHistorySnapshotRequest, GuidelineAspect, HistorySnapshot,
     ImportWorkbookPreviewResult, ImportWorkbookRequest, ImportWorkbookResult, NewGuidelineAspect,
     NewQuestion, NewSourceDocument, Question, QuestionStatus, ResetDatabaseRequest,
@@ -62,6 +63,60 @@ impl AutoEvaluationService {
 
     pub async fn list_questions(&self) -> Result<Vec<Question>, AppError> {
         self.repository.list_questions().await
+    }
+
+    pub async fn list_collaboration_locks(&self) -> Result<Vec<CollaborationLock>, AppError> {
+        self.repository.list_collaboration_locks().await
+    }
+
+    pub async fn list_collaboration_locks_for_resources(
+        &self,
+        resource_type: CollaborationResourceType,
+        resource_ids: &[String],
+    ) -> Result<Vec<CollaborationLock>, AppError> {
+        if resource_ids.is_empty() {
+            return Ok(vec![]);
+        }
+        self.repository
+            .list_collaboration_locks_for_resources(resource_type, resource_ids)
+            .await
+    }
+
+    pub async fn heartbeat_collaboration_presence(
+        &self,
+        editor_name: &str,
+    ) -> Result<CollaborationPresence, AppError> {
+        self.repository
+            .heartbeat_collaboration_presence(editor_name)
+            .await
+    }
+
+    pub async fn list_collaboration_presence(
+        &self,
+    ) -> Result<Vec<CollaborationPresence>, AppError> {
+        self.repository.list_collaboration_presence().await
+    }
+
+    pub async fn acquire_collaboration_lock(
+        &self,
+        resource_type: CollaborationResourceType,
+        resource_id: &str,
+        editor_name: &str,
+    ) -> Result<CollaborationLock, AppError> {
+        self.repository
+            .acquire_collaboration_lock(resource_type, resource_id, editor_name, 300)
+            .await
+    }
+
+    pub async fn release_collaboration_lock(
+        &self,
+        resource_type: CollaborationResourceType,
+        resource_id: &str,
+        editor_name: &str,
+    ) -> Result<(), AppError> {
+        self.repository
+            .release_collaboration_lock(resource_type, resource_id, editor_name)
+            .await
     }
 
     pub async fn list_guideline_aspects(&self) -> Result<Vec<GuidelineAspect>, AppError> {
@@ -123,6 +178,27 @@ impl AutoEvaluationService {
             .find(|question| question.id == request.question_id)
             .ok_or_else(|| AppError::Validation("question not found".into()))?;
         let mut question = request.question;
+
+        if let Some(lock) = self
+            .repository
+            .get_collaboration_lock(CollaborationResourceType::Question, &request.question_id)
+            .await?
+        {
+            if lock.editor_name != editor_name {
+                return Err(AppError::Validation(format!(
+                    "this question is being edited by {}",
+                    lock.editor_name
+                )));
+            }
+        }
+
+        if let Some(expected) = request.expected_updated_at {
+            if existing.updated_at != expected {
+                return Err(AppError::Validation(
+                    "this question changed in the shared database; refresh before saving".into(),
+                ));
+            }
+        }
 
         if question.text.trim().is_empty() {
             return Err(AppError::Validation("question text is required".into()));

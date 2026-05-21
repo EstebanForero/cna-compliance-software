@@ -20,7 +20,7 @@ const methodology = [
   },
   {
     title: "2. Elegir fuente de base",
-    text: "En Workspace, decida si trabajara con una base en carpeta local sincronizada por OneDrive, una base existente, o sincronizacion directa con Microsoft Graph app-folder.",
+    text: "En Configuración, decida si trabajara con una base local, una base existente, un paquete .acna, una carpeta OneDrive o Microsoft Graph como respaldo. La colaboración Turso viene configurada desde el build.",
   },
   {
     title: "3. Cargar o revisar lineamientos",
@@ -28,7 +28,7 @@ const methodology = [
   },
   {
     title: "4. Importar banco actual",
-    text: "Use el consolidado BASE/BASEvs como fuente. Cada fila representa una asignacion pregunta-publico; la app agrupa por numero de pregunta, evita duplicados, guarda los subpublicos asociados y no carga preguntas eliminadas en rojo.",
+    text: "Use el consolidado BASE/BASEvs como fuente. Cada fila representa una asignacion pregunta-publico; la app agrupa por numero de pregunta, evita duplicados, guarda los subpublicos asociados y conserva las preguntas eliminadas como estado Eliminar.",
   },
   {
     title: "5. Fijar original",
@@ -59,12 +59,12 @@ const guideSections = [
     steps: [
       "Abra la app y registre el nombre completo del editor.",
       "Si aparece el aviso de base vacia, seleccione Importar Excel.",
-      "Si necesita preparar OneDrive primero, omita el aviso y vaya a Workspace.",
+      "Si necesita preparar OneDrive primero, omita el aviso y vaya a Configuración.",
     ],
     shot: "dashboard",
   },
   {
-    title: "Workspace e importacion",
+    title: "Configuración e importacion",
     goal: "Conectar carpeta, abrir una base existente o importar el consolidado CNA.",
     steps: [
       "Seleccione carpeta local sincronizada, base existente o Microsoft Graph.",
@@ -256,7 +256,7 @@ function PlatformShot({ type }: { type: string }) {
       </div>
       <div className="grid min-h-52 grid-cols-[6.5rem_1fr] bg-card/70">
         <div className="space-y-2 border-r p-3">
-          {["Panel", "Workspace", "Lineamientos", "Banco", "Exportar"].map((item) => (
+          {["Panel", "Configuración", "Lineamientos", "Banco", "Exportar"].map((item) => (
             <div
               key={item}
               className={`h-6 rounded px-2 text-[10px] leading-6 ${
@@ -276,7 +276,7 @@ function PlatformShot({ type }: { type: string }) {
 function activeNav(type: string, item: string) {
   return (
     (type === "dashboard" && item === "Panel") ||
-    (type === "workspace" && item === "Workspace") ||
+    (type === "workspace" && item === "Configuración") ||
     (type === "lineaments" && item === "Lineamientos") ||
     (type === "questions" && item === "Banco") ||
     (type === "exports" && item === "Exportar")

@@ -13,6 +13,7 @@ import {
   Trash2,
   UserRound,
   AlertTriangle,
+  Cloud,
 } from "lucide-react";
 import type React from "react";
 import { useState } from "react";
@@ -27,6 +28,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Progress } from "@/components/ui/progress";
 import { api } from "@/lib/api";
 
 export const Route = createFileRoute("/workspace")({
@@ -153,11 +155,22 @@ function WorkspacePage() {
     resetConfirmation.trim() === "BORRAR DATOS" &&
     acknowledgeBackup &&
     acknowledgeIrreversible;
+  const tursoState = workspace.data?.tursoConnected
+    ? {
+        label: "Conectado a Turso",
+        detail: workspace.data.tursoDatabaseUrl ?? "Base remota activa",
+        badge: "Conectado",
+      }
+    : {
+        label: "Desconectado de Turso",
+        detail: "Usando base local o paquete .acna",
+        badge: "Desconectado",
+      };
 
   return (
     <div className="space-y-6">
       <section className="apple-hero p-6 md:p-8">
-        <h1 className="text-3xl font-semibold md:text-4xl">Workspace</h1>
+        <h1 className="text-3xl font-semibold md:text-4xl">Configuración</h1>
         <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">
           Configure el archivo local, conecte Microsoft si necesita sincronizar
           y cargue el consolidado Excel inicial.
@@ -181,6 +194,9 @@ function WorkspacePage() {
               <Badge variant={workspace.data?.microsoftAccount ? "secondary" : "outline"}>
                 {workspace.data?.microsoftAccount?.email ?? "Microsoft no conectado"}
               </Badge>
+              <Badge variant={workspace.data?.tursoConnected ? "secondary" : "outline"}>
+                {tursoState.badge}
+              </Badge>
             </div>
             <StatusRow
               icon={<Database />}
@@ -191,6 +207,11 @@ function WorkspacePage() {
               icon={<FolderOpen />}
               label="Carpeta OneDrive"
               value={workspace.data?.configuredOnedrivePath ?? "No configurada"}
+            />
+            <StatusRow
+              icon={<Cloud />}
+              label={tursoState.label}
+              value={tursoState.detail}
             />
             <div className="grid gap-2 sm:grid-cols-2">
               <Button variant="outline" onClick={chooseExistingDatabase}>
@@ -292,28 +313,39 @@ function WorkspacePage() {
 
           <Card>
             <CardHeader>
-              <CardTitle>Sincronizacion</CardTitle>
+              <CardTitle>Sincronización</CardTitle>
               <CardDescription>
-                Carpeta local sincronizada o copia directa por Microsoft Graph.
+                La conexión colaborativa de Turso se toma de la configuración de build. Microsoft
+                Graph queda como respaldo manual cuando esté configurado.
               </CardDescription>
             </CardHeader>
-            <CardContent className="flex flex-col gap-3 md:flex-row">
-              <Button
-                variant="outline"
-                onClick={() => syncToGraph.mutate()}
-                disabled={!workspace.data?.graphSyncAvailable || syncToGraph.isPending}
-              >
-                <CloudUpload className="size-4" />
-                Subir por Graph
-              </Button>
-              <Button
-                variant="outline"
-                onClick={() => syncFromGraph.mutate()}
-                disabled={!workspace.data?.graphSyncAvailable || syncFromGraph.isPending}
-              >
-                <CloudDownload className="size-4" />
-                Descargar por Graph
-              </Button>
+            <CardContent className="space-y-4">
+              <div className="rounded-lg border bg-background/60 p-3 text-sm">
+                <p className="font-medium">{tursoState.label}</p>
+                <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                  {workspace.data?.tursoConnected
+                    ? "Modo colaborativo activo. Las pantallas se refrescan automáticamente y los bloqueos evitan que dos editores modifiquen la misma pregunta al tiempo."
+                    : "Modo local activo. Para colaboración, construya la app con las credenciales Turso en .env.build o variables de entorno."}
+                </p>
+              </div>
+              <div className="flex flex-col gap-3 md:flex-row">
+                <Button
+                  variant="outline"
+                  onClick={() => syncToGraph.mutate()}
+                  disabled={!workspace.data?.graphSyncAvailable || syncToGraph.isPending}
+                >
+                  <CloudUpload className="size-4" />
+                  Subir por Graph
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => syncFromGraph.mutate()}
+                  disabled={!workspace.data?.graphSyncAvailable || syncFromGraph.isPending}
+                >
+                  <CloudDownload className="size-4" />
+                  Descargar por Graph
+                </Button>
+              </div>
             </CardContent>
           </Card>
 
@@ -346,6 +378,21 @@ function WorkspacePage() {
                 archivo, valide cobertura, ajuste lineamientos nuevos y solo
                 despues edite o agregue preguntas.
               </p>
+              {previewImport.isPending || importWorkbook.isPending ? (
+                <ImportProgress
+                  title={
+                    importWorkbook.isPending
+                      ? "Importando consolidado"
+                      : "Previsualizando Excel"
+                  }
+                  detail={
+                    importWorkbook.isPending
+                      ? "Guardando preguntas, lineamientos, publicos e instrumentos en la base."
+                      : "Leyendo hojas compatibles, colores, publicos y jerarquia CNA."
+                  }
+                  value={importWorkbook.isPending ? 72 : 38}
+                />
+              ) : null}
               {previewImport.data ? (
                 <div className="apple-tile space-y-3 p-3 text-sm">
                   <p className="flex items-center gap-2 font-medium">
@@ -502,6 +549,33 @@ function StatusRow({
         <p className="text-xs text-muted-foreground">{label}</p>
         <p className="break-words font-medium">{value}</p>
       </div>
+    </div>
+  );
+}
+
+function ImportProgress({
+  title,
+  detail,
+  value,
+}: {
+  title: string;
+  detail: string;
+  value: number;
+}) {
+  return (
+    <div className="rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-950 dark:border-blue-400/30 dark:bg-blue-950/70 dark:text-blue-100">
+      <div className="mb-3 flex items-start justify-between gap-3">
+        <div>
+          <p className="font-semibold">{title}</p>
+          <p className="mt-1 text-xs leading-5 text-blue-800 dark:text-blue-200">
+            {detail}
+          </p>
+        </div>
+        <span className="rounded-full bg-white px-2 py-1 text-xs font-medium text-blue-800 shadow-sm dark:bg-blue-900 dark:text-blue-100">
+          {value}%
+        </span>
+      </div>
+      <Progress value={value} className="bg-blue-100 dark:bg-blue-900" />
     </div>
   );
 }

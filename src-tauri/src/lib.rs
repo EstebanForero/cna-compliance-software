@@ -13,20 +13,22 @@ use std::sync::{Arc, RwLock};
 use base64::Engine;
 use db::LibSqlAutoEvalRepository;
 use domain::{
-    BaselineStatus, ChangeLogEntry, ConfigureWorkspaceRequest, DashboardSummary,
-    DatabasePackageResult, DeleteGuidelineAspectRequest, DeleteGuidelineAspectResult,
-    DeleteHistorySnapshotRequest, EditorProfile, ExportDatabasePackageRequest,
-    ExportProviderReviewDocxRequest, ExportWorkbookRequest, ExportWorkbookResult, GuidelineAspect,
-    HistorySnapshot, ImportWorkbookPreviewResult, ImportWorkbookRequest, ImportWorkbookResult,
+    AcquireCollaborationLockRequest, AvailableInstrumentPublic, BaselineStatus, ChangeLogEntry,
+    CollaborationLock, CollaborationLocksForResourcesRequest, CollaborationPresence,
+    ConfigureTursoWorkspaceRequest, ConfigureWorkspaceRequest, DashboardSummary, DatabasePackageResult,
+    DeleteGuidelineAspectRequest, DeleteGuidelineAspectResult, DeleteHistorySnapshotRequest,
+    EditorProfile, ExportDatabasePackageRequest, ExportProviderReviewDocxRequest,
+    ExportWorkbookRequest, ExportWorkbookResult, GuidelineAspect, HistorySnapshot,
+    ImportWorkbookPreviewResult, ImportWorkbookRequest, ImportWorkbookResult, InstrumentDefinition,
     InstrumentPublicOption, MarkOriginalBaselineRequest, MicrosoftAccount, MicrosoftAuthConfig,
     MicrosoftLoginRequest, MicrosoftLoginResult, NewGuidelineAspect, NewProviderLink, NewQuestion,
     OpenDatabasePackageRequest, OpenDatabaseRequest, ProviderLink, ProviderQuestionReview,
-    ProviderQuestionReviewItem, Question, ResetDatabaseRequest, ResetDatabaseResult,
-    ResetProviderQuestionReviewsRequest, ResetProviderQuestionReviewsResult,
+    ProviderQuestionReviewItem, Question, ReleaseCollaborationLockRequest, ResetDatabaseRequest,
+    ResetDatabaseResult, ResetProviderQuestionReviewsRequest, ResetProviderQuestionReviewsResult,
     RestoreHistorySnapshotRequest, SaveEditorProfileRequest, SaveEvidenceAttachmentRequest,
-    SaveEvidenceAttachmentResult, SaveProviderQuestionReviewRequest, SyncResult,
-    UpdateGuidelineAspectRequest, UpdateGuidelineAspectResult, UpdateQuestionRequest,
-    ValidationIssue, WorkspaceStatus,
+    SaveEvidenceAttachmentResult, SaveInstrumentDefinitionRequest,
+    SaveProviderQuestionReviewRequest, SyncResult, UpdateGuidelineAspectRequest,
+    UpdateGuidelineAspectResult, UpdateQuestionRequest, ValidationIssue, WorkspaceStatus,
 };
 use error::{AppError, CommandError};
 use service::AutoEvaluationService;
@@ -39,6 +41,8 @@ struct RuntimeWorkspace {
     service: Arc<AutoEvaluationService>,
     database_path: PathBuf,
     onedrive_path: Option<PathBuf>,
+    turso_database_url: Option<String>,
+    turso_auth_token: Option<String>,
     microsoft_account: Option<MicrosoftAccount>,
     microsoft_auth_config: Option<MicrosoftAuthConfig>,
     microsoft_access_token: Option<String>,
@@ -76,6 +80,25 @@ async fn open_existing_database(
 ) -> Result<WorkspaceStatus, CommandError> {
     let database_path = PathBuf::from(request.database_path.trim());
     state.reopen(database_path, None, None, None)?;
+    get_workspace_status(state).await
+}
+
+#[tauri::command]
+async fn configure_turso_workspace(
+    state: State<'_, AppState>,
+    request: ConfigureTursoWorkspaceRequest,
+) -> Result<WorkspaceStatus, CommandError> {
+    let database_url = request.database_url.trim();
+    let auth_token = request.auth_token.trim();
+    if !database_url.starts_with("libsql://") && !database_url.starts_with("https://") {
+        return Err(
+            AppError::Validation("Turso URL must start with libsql:// or https://".into()).into(),
+        );
+    }
+    if auth_token.len() < 20 {
+        return Err(AppError::Validation("Turso auth token is required".into()).into());
+    }
+    state.reopen_turso(database_url.to_string(), auth_token.to_string())?;
     get_workspace_status(state).await
 }
 
@@ -245,6 +268,48 @@ async fn list_instrument_public_options(
         .list_instrument_public_options()
         .await
         .map_err(Into::into)
+}
+
+#[tauri::command]
+async fn list_instrument_definitions(
+    state: State<'_, AppState>,
+) -> Result<Vec<InstrumentDefinition>, CommandError> {
+    let (service, _) = state.snapshot()?;
+    service
+        .list_instrument_definitions()
+        .await
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+async fn list_available_instrument_publics(
+    state: State<'_, AppState>,
+) -> Result<Vec<AvailableInstrumentPublic>, CommandError> {
+    let (service, _) = state.snapshot()?;
+    service
+        .list_available_instrument_publics()
+        .await
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+async fn save_instrument_definition(
+    state: State<'_, AppState>,
+    request: SaveInstrumentDefinitionRequest,
+) -> Result<InstrumentDefinition, CommandError> {
+    let (service, _) = state.snapshot()?;
+    let editor = state.current_editor_name()?;
+    let instrument = service.save_instrument_definition(request).await?;
+    service
+        .record_change(
+            "instrument",
+            &instrument.id,
+            "save_instrument_definition",
+            &editor,
+            "Instrument definition updated from the desktop app",
+        )
+        .await?;
+    Ok(instrument)
 }
 
 #[tauri::command]
@@ -479,6 +544,71 @@ async fn list_change_logs(state: State<'_, AppState>) -> Result<Vec<ChangeLogEnt
 }
 
 #[tauri::command]
+async fn list_collaboration_locks(
+    state: State<'_, AppState>,
+) -> Result<Vec<CollaborationLock>, CommandError> {
+    let (service, _) = state.snapshot()?;
+    service.list_collaboration_locks().await.map_err(Into::into)
+}
+
+#[tauri::command]
+async fn list_collaboration_locks_for_resources(
+    state: State<'_, AppState>,
+    request: CollaborationLocksForResourcesRequest,
+) -> Result<Vec<CollaborationLock>, CommandError> {
+    let (service, status) = state.snapshot()?;
+    if !status.turso_connected {
+        return Ok(vec![]);
+    }
+    service
+        .list_collaboration_locks_for_resources(request.resource_type, &request.resource_ids)
+        .await
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+async fn heartbeat_collaboration_presence(
+    state: State<'_, AppState>,
+) -> Result<Vec<CollaborationPresence>, CommandError> {
+    let (service, status) = state.snapshot()?;
+    if !status.turso_connected {
+        return Ok(vec![]);
+    }
+    let editor = state.current_editor_name()?;
+    service.heartbeat_collaboration_presence(&editor).await?;
+    service
+        .list_collaboration_presence()
+        .await
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+async fn acquire_collaboration_lock(
+    state: State<'_, AppState>,
+    request: AcquireCollaborationLockRequest,
+) -> Result<CollaborationLock, CommandError> {
+    let (service, _) = state.snapshot()?;
+    let editor = state.current_editor_name()?;
+    service
+        .acquire_collaboration_lock(request.resource_type, &request.resource_id, &editor)
+        .await
+        .map_err(Into::into)
+}
+
+#[tauri::command]
+async fn release_collaboration_lock(
+    state: State<'_, AppState>,
+    request: ReleaseCollaborationLockRequest,
+) -> Result<(), CommandError> {
+    let (service, _) = state.snapshot()?;
+    let editor = state.current_editor_name()?;
+    service
+        .release_collaboration_lock(request.resource_type, &request.resource_id, &editor)
+        .await?;
+    Ok(())
+}
+
+#[tauri::command]
 async fn list_history_snapshots(
     state: State<'_, AppState>,
 ) -> Result<Vec<HistorySnapshot>, CommandError> {
@@ -690,10 +820,12 @@ impl AppState {
                 .onedrive_path
                 .as_ref()
                 .map(|path| path.to_string_lossy().to_string()),
+            turso_database_url: workspace.turso_database_url.clone(),
             microsoft_account: workspace.microsoft_account.clone(),
             microsoft_auth_config: workspace.microsoft_auth_config.clone(),
             editor_profile: workspace.editor_profile.clone(),
             graph_sync_available: workspace.microsoft_access_token.is_some(),
+            turso_connected: workspace.turso_database_url.is_some(),
             has_questions: false,
         };
         Ok((Arc::clone(&workspace.service), status))
@@ -720,6 +852,8 @@ impl AppState {
         workspace.service = Arc::new(service);
         workspace.database_path = database_path;
         workspace.onedrive_path = onedrive_path;
+        workspace.turso_database_url = None;
+        workspace.turso_auth_token = None;
         if microsoft_account.is_some() {
             workspace.microsoft_account = microsoft_account;
         }
@@ -729,10 +863,29 @@ impl AppState {
         self.save_config(&workspace)
     }
 
+    fn reopen_turso(&self, database_url: String, auth_token: String) -> Result<(), AppError> {
+        let repository = tauri::async_runtime::block_on(LibSqlAutoEvalRepository::open_remote(
+            &database_url,
+            &auth_token,
+        ))?;
+        let service = AutoEvaluationService::new(Arc::new(repository));
+        let mut workspace = self
+            .workspace
+            .write()
+            .map_err(|_| AppError::Validation("workspace lock is poisoned".into()))?;
+        workspace.service = Arc::new(service);
+        workspace.turso_database_url = Some(database_url);
+        workspace.turso_auth_token = Some(auth_token);
+        workspace.onedrive_path = None;
+        self.save_config(&workspace)
+    }
+
     fn save_config(&self, workspace: &RuntimeWorkspace) -> Result<(), AppError> {
         let content = serde_json::json!({
             "databasePath": workspace.database_path,
             "onedrivePath": workspace.onedrive_path,
+            "tursoDatabaseUrl": workspace.turso_database_url,
+            "tursoAuthToken": workspace.turso_auth_token,
             "microsoftAccount": workspace.microsoft_account,
             "microsoftAuthConfig": workspace.microsoft_auth_config,
             "microsoftAccessToken": workspace.microsoft_access_token,
@@ -779,6 +932,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_workspace_status,
             configure_onedrive_workspace,
+            configure_turso_workspace,
             open_existing_database,
             export_database_package,
             open_database_package,
@@ -789,6 +943,9 @@ pub fn run() {
             get_dashboard,
             list_questions,
             list_instrument_public_options,
+            list_instrument_definitions,
+            list_available_instrument_publics,
+            save_instrument_definition,
             create_question,
             update_question,
             list_guideline_aspects,
@@ -803,6 +960,11 @@ pub fn run() {
             export_workbook,
             reset_database_data,
             list_change_logs,
+            list_collaboration_locks,
+            list_collaboration_locks_for_resources,
+            heartbeat_collaboration_presence,
+            acquire_collaboration_lock,
+            release_collaboration_lock,
             list_history_snapshots,
             save_manual_history_snapshot,
             delete_history_snapshot,
@@ -839,6 +1001,24 @@ fn load_initial_workspace(
         .and_then(|value| value.get("onedrivePath"))
         .and_then(|value| value.as_str())
         .map(PathBuf::from);
+    let turso_database_url = saved
+        .as_ref()
+        .and_then(|value| value.get("tursoDatabaseUrl"))
+        .and_then(|value| value.as_str())
+        .map(ToOwned::to_owned)
+        .or_else(|| std::env::var("AUTOCNA_TURSO_DATABASE_URL").ok())
+        .or_else(|| std::env::var("TURSO_DATABASE_URL").ok())
+        .or_else(|| embedded_env("AUTOCNA_TURSO_DATABASE_URL"))
+        .or_else(|| embedded_env("TURSO_DATABASE_URL"));
+    let turso_auth_token = saved
+        .as_ref()
+        .and_then(|value| value.get("tursoAuthToken"))
+        .and_then(|value| value.as_str())
+        .map(ToOwned::to_owned)
+        .or_else(|| std::env::var("AUTOCNA_TURSO_AUTH_TOKEN").ok())
+        .or_else(|| std::env::var("TURSO_AUTH_TOKEN").ok())
+        .or_else(|| embedded_env("AUTOCNA_TURSO_AUTH_TOKEN"))
+        .or_else(|| embedded_env("TURSO_AUTH_TOKEN"));
     let microsoft_account = saved
         .as_ref()
         .and_then(|value| value.get("microsoftAccount").cloned())
@@ -861,19 +1041,42 @@ fn load_initial_workspace(
         std::fs::create_dir_all(parent)?;
     }
 
-    let repository =
-        tauri::async_runtime::block_on(LibSqlAutoEvalRepository::open(&database_path))?;
+    let repository = if let (Some(database_url), Some(auth_token)) =
+        (turso_database_url.as_deref(), turso_auth_token.as_deref())
+    {
+        tauri::async_runtime::block_on(LibSqlAutoEvalRepository::open_remote(
+            database_url,
+            auth_token,
+        ))?
+    } else {
+        tauri::async_runtime::block_on(LibSqlAutoEvalRepository::open(&database_path))?
+    };
     let service = AutoEvaluationService::new(Arc::new(repository));
 
     Ok(RuntimeWorkspace {
         service: Arc::new(service),
         database_path,
         onedrive_path,
+        turso_database_url,
+        turso_auth_token,
         microsoft_account,
         microsoft_auth_config,
         microsoft_access_token,
         editor_profile,
     })
+}
+
+fn embedded_env(name: &str) -> Option<String> {
+    match name {
+        "AUTOCNA_TURSO_DATABASE_URL" => option_env!("AUTOCNA_TURSO_DATABASE_URL"),
+        "TURSO_DATABASE_URL" => option_env!("TURSO_DATABASE_URL"),
+        "AUTOCNA_TURSO_AUTH_TOKEN" => option_env!("AUTOCNA_TURSO_AUTH_TOKEN"),
+        "TURSO_AUTH_TOKEN" => option_env!("TURSO_AUTH_TOKEN"),
+        _ => None,
+    }
+    .map(str::trim)
+    .filter(|value| !value.is_empty())
+    .map(ToOwned::to_owned)
 }
 
 fn read_workspace_config(path: &Path) -> Option<serde_json::Value> {

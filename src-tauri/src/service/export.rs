@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use rust_xlsxwriter::{Color, Format, FormatAlign, FormatBorder, Workbook};
@@ -8,8 +8,9 @@ use crate::audience::{
     InstrumentAudience, InstrumentColumn,
 };
 use crate::domain::{
-    ExportKind, ExportWorkbookRequest, ExportWorkbookResult, GuidelineAspect,
-    InstrumentPublicOption, Question, QuestionDiffKind, QuestionStatus,
+    AvailableInstrumentPublic, ExportKind, ExportWorkbookRequest, ExportWorkbookResult,
+    GuidelineAspect, InstrumentDefinition, InstrumentPublicOption, Question, QuestionDiffKind,
+    QuestionStatus, SaveInstrumentDefinitionRequest,
 };
 use crate::error::AppError;
 use crate::service::baseline::diff_questions;
@@ -34,12 +35,18 @@ impl AutoEvaluationService {
             ExportKind::Consolidated => {
                 write_consolidated_workbook(&request.path, &diffed, &aspects)?
             }
-            ExportKind::Instruments => write_instruments_workbook(
-                &request.path,
-                &diffed,
-                &aspects,
-                request.instrument_public.as_deref(),
-            )?,
+            ExportKind::Instruments => {
+                let instruments = self
+                    .instrument_definitions_for_questions(&questions)
+                    .await?;
+                write_instruments_workbook(
+                    &request.path,
+                    &diffed,
+                    &aspects,
+                    &instruments,
+                    request.instrument_public.as_deref(),
+                )?
+            }
         }
 
         Ok(ExportWorkbookResult {
@@ -75,11 +82,12 @@ impl AutoEvaluationService {
             diff_questions(&questions, &snapshots)
         };
 
-        Ok(group_instruments_by_public(&diffed)
+        let instruments = self.instrument_definitions_for_diff(&diffed).await?;
+        Ok(group_instruments_by_public(&diffed, &instruments)
             .into_iter()
             .map(|instrument| InstrumentPublicOption {
-                label: display_public_label(&instrument.public),
-                public: instrument.public,
+                label: instrument.label,
+                public: instrument.key,
                 subpublics: instrument
                     .subpublics
                     .into_iter()
@@ -88,6 +96,95 @@ impl AutoEvaluationService {
                 question_count: instrument.questions.len(),
             })
             .collect())
+    }
+
+    pub async fn list_instrument_definitions(&self) -> Result<Vec<InstrumentDefinition>, AppError> {
+        let questions = self.repository.list_questions().await?;
+        self.instrument_definitions_for_questions(&questions).await
+    }
+
+    pub async fn list_available_instrument_publics(
+        &self,
+    ) -> Result<Vec<AvailableInstrumentPublic>, AppError> {
+        let questions = self.repository.list_questions().await?;
+        let definitions = self
+            .instrument_definitions_for_questions(&questions)
+            .await?;
+        let mut publics = audience_columns_from_questions(&questions)
+            .into_iter()
+            .map(|column| {
+                let parsed = InstrumentAudience::parse(&column);
+                let assigned = definitions
+                    .iter()
+                    .find(|instrument| {
+                        instrument
+                            .public_keys
+                            .iter()
+                            .any(|key| key == &column || key == &parsed.public)
+                    });
+                AvailableInstrumentPublic {
+                    key: column.clone(),
+                    label: display_instrument_column_label(&parsed.public, &column),
+                    subpublics: vec![],
+                    assigned_instrument_id: assigned.map(|instrument| instrument.id.clone()),
+                    assigned_instrument_label: assigned.map(|instrument| instrument.label.clone()),
+                }
+            })
+            .collect::<Vec<_>>();
+        publics.sort_by(|left, right| left.label.cmp(&right.label));
+        Ok(publics)
+    }
+
+    pub async fn save_instrument_definition(
+        &self,
+        request: SaveInstrumentDefinitionRequest,
+    ) -> Result<InstrumentDefinition, AppError> {
+        self.repository
+            .save_instrument_definition(request, false)
+            .await
+    }
+
+    async fn instrument_definitions_for_questions(
+        &self,
+        questions: &[Question],
+    ) -> Result<Vec<InstrumentDefinition>, AppError> {
+        let diff = questions
+            .iter()
+            .cloned()
+            .map(|question| (question, QuestionDiffKind::Unchanged))
+            .collect::<Vec<_>>();
+        self.instrument_definitions_for_diff(&diff).await
+    }
+
+    async fn instrument_definitions_for_diff(
+        &self,
+        questions: &[(Question, QuestionDiffKind)],
+    ) -> Result<Vec<InstrumentDefinition>, AppError> {
+        let mut definitions = self.repository.list_instrument_definitions().await?;
+        let assigned = definitions
+            .iter()
+            .flat_map(|instrument| instrument.public_keys.iter().cloned())
+            .collect::<std::collections::BTreeSet<_>>();
+        for (public, columns) in audience_columns_by_public_from_diff(questions) {
+            if assigned.contains(&public) || columns.iter().all(|column| assigned.contains(column)) {
+                continue;
+            }
+            let label = display_public_label(&public);
+            let definition = self
+                .repository
+                .save_instrument_definition(
+                    SaveInstrumentDefinitionRequest {
+                        id: None,
+                        label,
+                        public_keys: columns,
+                    },
+                    true,
+                )
+                .await?;
+            definitions.push(definition);
+        }
+        definitions.sort_by(|left, right| left.label.cmp(&right.label));
+        Ok(definitions)
     }
 }
 
@@ -197,15 +294,16 @@ fn write_instruments_workbook(
     path: &str,
     questions: &[(Question, QuestionDiffKind)],
     _aspects: &[GuidelineAspect],
-    instrument_public: Option<&str>,
+    definitions: &[InstrumentDefinition],
+    instrument_key: Option<&str>,
 ) -> Result<(), AppError> {
     let output = InstrumentOutput::from_path(path);
     std::fs::create_dir_all(&output.directory)?;
-    let instruments = group_instruments_by_public(questions)
+    let instruments = group_instruments_by_public(questions, definitions)
         .into_iter()
         .filter(|instrument| {
-            instrument_public
-                .map(|public| instrument.public == public)
+            instrument_key
+                .map(|key| instrument.key == key)
                 .unwrap_or(true)
         })
         .collect::<Vec<_>>();
@@ -215,7 +313,7 @@ fn write_instruments_workbook(
         ));
     }
     for instrument in instruments {
-        let file_path = output.file_path(&instrument.public);
+        let file_path = output.file_path(&instrument.key);
         write_single_instrument_workbook(&file_path, &instrument)?;
     }
     Ok(())
@@ -234,7 +332,7 @@ fn write_single_instrument_workbook(
         by_lineament,
         &instrument.questions,
         &instrument.subpublics,
-        &instrument.public,
+        &instrument.label,
         &formats,
     )?;
 
@@ -244,7 +342,7 @@ fn write_single_instrument_workbook(
         by_order,
         &instrument.questions,
         &instrument.subpublics,
-        &instrument.public,
+        &instrument.label,
         &formats,
     )?;
 
@@ -298,14 +396,22 @@ impl InstrumentOutput {
 
 #[derive(Debug)]
 struct InstrumentWorkbook {
-    public: String,
+    key: String,
+    label: String,
     subpublics: Vec<InstrumentColumn>,
     questions: Vec<(Question, QuestionDiffKind)>,
 }
 
 fn group_instruments_by_public(
     questions: &[(Question, QuestionDiffKind)],
+    definitions: &[InstrumentDefinition],
 ) -> Vec<InstrumentWorkbook> {
+    let mut public_to_instrument = BTreeMap::new();
+    for definition in definitions {
+        for public in &definition.public_keys {
+            public_to_instrument.insert(public.clone(), definition);
+        }
+    }
     let mut groups: BTreeMap<String, BTreeMap<String, Vec<(Question, QuestionDiffKind)>>> =
         BTreeMap::new();
 
@@ -321,7 +427,12 @@ fn group_instruments_by_public(
         };
 
         for audience in audiences {
-            let public_entry = groups.entry(audience.public).or_default();
+            let instrument_key = public_to_instrument
+                .get(&audience.column)
+                .or_else(|| public_to_instrument.get(&audience.public))
+                .map(|instrument| instrument.key.clone())
+                .unwrap_or_else(|| audience.public.clone());
+            let public_entry = groups.entry(instrument_key).or_default();
             public_entry
                 .entry(audience.column)
                 .or_default()
@@ -331,12 +442,23 @@ fn group_instruments_by_public(
 
     groups
         .into_iter()
-        .map(|(public, subpublic_map)| {
+        .map(|(key, subpublic_map)| {
+            let definition = definitions
+                .iter()
+                .find(|instrument| instrument.key == key)
+                .cloned();
+            let label = definition
+                .as_ref()
+                .map(|instrument| instrument.label.clone())
+                .unwrap_or_else(|| display_public_label(&key));
             let subpublics = subpublic_map
                 .keys()
                 .map(|key| InstrumentColumn {
                     key: key.clone(),
-                    label: display_instrument_column_label(&public, key),
+                    label: display_instrument_column_label(
+                        &InstrumentAudience::parse(key).public,
+                        key,
+                    ),
                 })
                 .collect::<Vec<_>>();
             let mut by_question: BTreeMap<String, (Question, QuestionDiffKind)> = BTreeMap::new();
@@ -348,11 +470,47 @@ fn group_instruments_by_public(
                 }
             }
             InstrumentWorkbook {
-                public,
+                key,
+                label,
                 subpublics,
                 questions: by_question.into_values().collect(),
             }
         })
+        .collect()
+}
+
+fn audience_columns_from_questions(questions: &[Question]) -> Vec<String> {
+    let mut columns = BTreeSet::new();
+    for question in questions {
+        for audience in &question.audiences {
+            let parsed = InstrumentAudience::parse(audience);
+            columns.insert(parsed.column);
+        }
+    }
+    columns.into_iter().collect()
+}
+
+fn audience_columns_by_public_from_diff(
+    questions: &[(Question, QuestionDiffKind)],
+) -> BTreeMap<String, Vec<String>> {
+    let mut grouped: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for (question, _) in questions {
+        if question.audiences.is_empty() {
+            let fallback = InstrumentAudience::fallback();
+            grouped
+                .entry(fallback.public)
+                .or_default()
+                .insert(fallback.column);
+            continue;
+        }
+        for audience in &question.audiences {
+            let parsed = InstrumentAudience::parse(audience);
+            grouped.entry(parsed.public).or_default().insert(parsed.column);
+        }
+    }
+    grouped
+        .into_iter()
+        .map(|(public, columns)| (public, columns.into_iter().collect()))
         .collect()
 }
 
@@ -437,12 +595,12 @@ fn write_instrument_lineament_sheet(
     worksheet: &mut rust_xlsxwriter::Worksheet,
     questions: &[(Question, QuestionDiffKind)],
     audiences: &[InstrumentColumn],
-    public: &str,
+    instrument_label: &str,
     formats: &ExportFormats,
 ) -> Result<(), AppError> {
     let title = format!(
         "INSTRUMENTO {} POR LINEAMIENTOS DEL CNA",
-        instrument_title_public(public)
+        instrument_title_public(instrument_label)
     );
     worksheet.merge_range(
         1,
@@ -456,25 +614,25 @@ fn write_instrument_lineament_sheet(
     worksheet.set_row_height(1, 18.75)?;
     worksheet.set_row_height(2, 24.75)?;
     worksheet.set_row_height(3, 22.5)?;
-    worksheet.set_column_width(0, 11.4)?;
-    worksheet.set_column_width(1, 22.1)?;
-    worksheet.set_column_width(2, 14.0)?;
-    worksheet.set_column_width(3, 45.6)?;
-    worksheet.set_column_width(4, 10.7)?;
-    worksheet.set_column_width(5, 53.1)?;
-    worksheet.set_column_width(6, 16.5)?;
+    worksheet.set_column_width(0, 12.0)?;
+    worksheet.set_column_width(1, 11.4)?;
+    worksheet.set_column_width(2, 22.1)?;
+    worksheet.set_column_width(3, 14.0)?;
+    worksheet.set_column_width(4, 45.6)?;
+    worksheet.set_column_width(5, 10.7)?;
+    worksheet.set_column_width(6, 53.1)?;
     worksheet.set_column_width(7, 13.1)?;
     for audience_index in 0..audiences.len() {
         worksheet.set_column_width((8 + audience_index) as u16, 49.4)?;
     }
     let fixed_headers = [
+        "# Pregunta",
         "FACTOR",
         "",
         "CARACTERISTICA",
         "",
         "ASPECTO",
         "",
-        "# Pregunta",
         "Convencion opcion de respuesta",
     ];
     for (index, header) in fixed_headers.iter().enumerate() {
@@ -488,7 +646,7 @@ fn write_instrument_lineament_sheet(
             &formats.header,
         )?;
     }
-    let subheaders = ["#", "Descripcion", "#", "Descripcion", "#", "Descripcion"];
+    let subheaders = ["", "#", "Descripcion", "#", "Descripcion", "#", "Descripcion", ""];
     for (index, header) in subheaders.iter().enumerate() {
         worksheet.write_string_with_format(3, index as u16, *header, &formats.header)?;
     }
@@ -508,13 +666,13 @@ fn write_instrument_lineament_sheet(
             split_number_name(&question.characteristic);
         let (aspect_code, aspect_description) = split_number_name(&question.aspect);
         let values = [
+            question.code.clone(),
             factor_code,
             factor_name,
             characteristic_code,
             characteristic_name,
             aspect_code,
             aspect_description,
-            question.code.clone(),
             question.convention_code.clone().unwrap_or_default(),
         ];
         let mut row_texts = values.clone().to_vec();
@@ -545,32 +703,47 @@ fn write_instrument_order_sheet(
     worksheet: &mut rust_xlsxwriter::Worksheet,
     questions: &[(Question, QuestionDiffKind)],
     audiences: &[InstrumentColumn],
-    public: &str,
+    instrument_label: &str,
     formats: &ExportFormats,
 ) -> Result<(), AppError> {
-    let title = format!("INSTRUMENTO {} POR ORDEN", instrument_title_public(public));
+    let title = format!(
+        "INSTRUMENTO {} POR ORDEN",
+        instrument_title_public(instrument_label)
+    );
     worksheet.merge_range(
         1,
         0,
         1,
-        (1 + audiences.len()) as u16,
+        (7 + audiences.len()) as u16,
         &title,
         &formats.title,
     )?;
-    worksheet.set_freeze_panes(3, 2)?;
+    worksheet.set_freeze_panes(3, 8)?;
     worksheet.set_row_height(1, 18.75)?;
     worksheet.set_row_height(2, 47.25)?;
-    worksheet.set_column_width(0, 12)?;
-    worksheet.set_column_width(1, 13.1)?;
+    worksheet.set_column_width(0, 12.0)?;
+    worksheet.set_column_width(1, 11.4)?;
+    worksheet.set_column_width(2, 22.1)?;
+    worksheet.set_column_width(3, 14.0)?;
+    worksheet.set_column_width(4, 45.6)?;
+    worksheet.set_column_width(5, 10.7)?;
+    worksheet.set_column_width(6, 53.1)?;
+    worksheet.set_column_width(7, 13.1)?;
     for audience_index in 0..audiences.len() {
-        worksheet.set_column_width((2 + audience_index) as u16, 49.4)?;
+        worksheet.set_column_width((8 + audience_index) as u16, 49.4)?;
     }
     worksheet.write_string_with_format(2, 0, "# Pregunta", &formats.header)?;
-    worksheet.write_string_with_format(2, 1, "Convencion opcion de respuesta", &formats.header)?;
+    worksheet.write_string_with_format(2, 1, "Factor #", &formats.header)?;
+    worksheet.write_string_with_format(2, 2, "Factor", &formats.header)?;
+    worksheet.write_string_with_format(2, 3, "Caracteristica #", &formats.header)?;
+    worksheet.write_string_with_format(2, 4, "Caracteristica", &formats.header)?;
+    worksheet.write_string_with_format(2, 5, "Aspecto #", &formats.header)?;
+    worksheet.write_string_with_format(2, 6, "Aspecto", &formats.header)?;
+    worksheet.write_string_with_format(2, 7, "Convencion opcion de respuesta", &formats.header)?;
     for (index, audience) in audiences.iter().enumerate() {
         worksheet.write_string_with_format(
             2,
-            (2 + index) as u16,
+            (8 + index) as u16,
             &audience.label,
             &formats.header,
         )?;
@@ -580,16 +753,24 @@ fn write_instrument_order_sheet(
     sorted.sort_by(|(left, _), (right, _)| compare_question_codes(&left.code, &right.code));
     for (index, (question, diff)) in sorted.into_iter().enumerate() {
         let row = (index + 3) as u32;
-        worksheet.set_row_height(row, instrument_row_height(&[question.text.clone()]))?;
-        write_value_with_diff(worksheet, row, 0, &question.code, diff, formats)?;
-        write_value_with_diff(
-            worksheet,
-            row,
-            1,
-            question.convention_code.as_deref().unwrap_or(""),
-            diff,
-            formats,
-        )?;
+        let (factor_code, factor_name) = split_number_name(&question.factor);
+        let (characteristic_code, characteristic_name) =
+            split_number_name(&question.characteristic);
+        let (aspect_code, aspect_description) = split_number_name(&question.aspect);
+        let values = [
+            question.code.clone(),
+            factor_code,
+            factor_name,
+            characteristic_code,
+            characteristic_name,
+            aspect_code,
+            aspect_description,
+            question.convention_code.clone().unwrap_or_default(),
+        ];
+        let mut row_texts = values.clone().to_vec();
+        row_texts.push(question.text.clone());
+        worksheet.set_row_height(row, instrument_row_height(&row_texts))?;
+        write_values_with_diff(worksheet, row, 0, &values, diff, formats)?;
         for (audience_index, audience) in audiences.iter().enumerate() {
             if question
                 .audiences
@@ -599,7 +780,7 @@ fn write_instrument_order_sheet(
                 write_value_with_diff(
                     worksheet,
                     row,
-                    (2 + audience_index) as u16,
+                    (8 + audience_index) as u16,
                     &question.text,
                     diff,
                     formats,

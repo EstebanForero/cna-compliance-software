@@ -1,4 +1,4 @@
-import { Plus, Search, X } from "lucide-react";
+import { FilterX, Plus, Search, X } from "lucide-react";
 import { memo } from "react";
 
 import { Badge } from "@/components/ui/badge";
@@ -12,6 +12,13 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Pagination } from "@/components/ui/pagination";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import type { GuidelineAspect, NewGuidelineAspect, Question } from "@/lib/types";
 
 import { InlineCreateLineamentForm } from "./InlineCreateLineamentForm";
@@ -27,6 +34,12 @@ type LineamentsListProps = {
   hasLoaded: boolean;
   search: string;
   setSearch: (value: string) => void;
+  filterFactorCode: string;
+  setFilterFactorCode: (value: string) => void;
+  filterCharacteristicKey: string;
+  setFilterCharacteristicKey: (value: string) => void;
+  filterCharacteristicOptions: CharacteristicChoice[];
+  clearLineamentFilters: () => void;
   onPageChange: (page: number) => void;
   createOpen: boolean;
   setCreateOpen: (value: boolean | ((value: boolean) => boolean)) => void;
@@ -88,6 +101,12 @@ export const LineamentsList = memo(function LineamentsList({
   hasLoaded,
   search,
   setSearch,
+  filterFactorCode,
+  setFilterFactorCode,
+  filterCharacteristicKey,
+  setFilterCharacteristicKey,
+  filterCharacteristicOptions,
+  clearLineamentFilters,
   onPageChange,
   createOpen,
   setCreateOpen,
@@ -118,6 +137,8 @@ export const LineamentsList = memo(function LineamentsList({
   customCharacteristicName,
   setCustomCharacteristicName,
 }: LineamentsListProps) {
+  const hasFilters = Boolean(search.trim() || filterFactorCode || filterCharacteristicKey);
+
   return (
     <section className="space-y-4">
       <Card>
@@ -136,7 +157,7 @@ export const LineamentsList = memo(function LineamentsList({
               }}
             >
               <Plus className="size-4" />
-              Agregar
+              Nuevo aspecto
             </Button>
             <div className="relative w-full md:w-80">
               <Search className="pointer-events-none absolute left-3 top-2.5 size-4 text-muted-foreground" />
@@ -150,6 +171,121 @@ export const LineamentsList = memo(function LineamentsList({
           </div>
         </CardHeader>
         <CardContent className="space-y-3">
+          <div className="rounded-lg border bg-background/60 p-3">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <div>
+                <p className="text-sm font-semibold">Administrar estructura CNA</p>
+                <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                  Para crear un factor o característica nueva, abra el formulario y la app
+                  asignará los códigos automáticamente. Cada alta termina creando un aspecto.
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    setCreateOpen(true);
+                    setSelected(null);
+                    setEditDraft(null);
+                    setFactorDialogOpen(true);
+                  }}
+                >
+                  <Plus className="size-4" />
+                  Nuevo factor
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    setCreateOpen(true);
+                    setSelected(null);
+                    setEditDraft(null);
+                    if (draft.factorCode) setCharacteristicDialogOpen(true);
+                  }}
+                >
+                  <Plus className="size-4" />
+                  Nueva característica
+                </Button>
+                <Button
+                  type="button"
+                  onClick={() => {
+                    setCreateOpen(true);
+                    setSelected(null);
+                    setEditDraft(null);
+                  }}
+                >
+                  <Plus className="size-4" />
+                  Nuevo aspecto
+                </Button>
+              </div>
+            </div>
+          </div>
+
+          <div className="grid gap-2 rounded-lg border bg-background/60 p-3 lg:grid-cols-[1fr_1fr_auto]">
+            <div className="grid gap-1.5">
+              <span className="text-xs font-medium text-muted-foreground">Factor</span>
+              <Select
+                value={filterFactorCode || "all"}
+                onValueChange={(value) =>
+                  setFilterFactorCode(value === "all" ? "" : value)
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Todos los factores" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todos los factores</SelectItem>
+                  {factorChoices.map((factor) => (
+                    <SelectItem key={factor.code} value={factor.code}>
+                      {factor.code}. {factor.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="grid gap-1.5">
+              <span className="text-xs font-medium text-muted-foreground">
+                Característica
+              </span>
+              <Select
+                value={filterCharacteristicKey || "all"}
+                onValueChange={(value) =>
+                  setFilterCharacteristicKey(value === "all" ? "" : value)
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Todas las características" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todas las características</SelectItem>
+                  {filterCharacteristicOptions.map((characteristic) => (
+                    <SelectItem
+                      key={`${characteristic.factorCode}:${characteristic.code}`}
+                      value={`${characteristic.factorCode}:${characteristic.code}`}
+                    >
+                      {filterFactorCode ? "" : `${characteristic.factorCode} / `}
+                      {characteristic.code}. {characteristic.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <Button
+              type="button"
+              variant="outline"
+              className="self-end"
+              disabled={!hasFilters}
+              onClick={clearLineamentFilters}
+              aria-label="Limpiar filtros"
+              title="Limpiar filtros"
+            >
+              <FilterX className="size-4" />
+            </Button>
+          </div>
+
           {createOpen ? (
             <div className="rounded-lg border border-primary/20 bg-background/70 p-4">
               <div className="mb-4 flex items-start justify-between gap-3">

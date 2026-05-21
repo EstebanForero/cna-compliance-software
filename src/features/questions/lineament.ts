@@ -56,11 +56,11 @@ export function factorOptionsFromLineaments(aspects: GuidelineAspect[]) {
 
 export function characteristicOptionsFromLineaments(
   aspects: GuidelineAspect[],
-  factorCode: string,
+  factorCode = "",
 ) {
   const seen = new Map<string, CharacteristicOption>();
   for (const aspect of aspects) {
-    if (aspect.factorCode !== factorCode) continue;
+    if (factorCode && aspect.factorCode !== factorCode) continue;
     const key = `${aspect.factorCode}:${aspect.characteristicCode}`;
     if (!seen.has(key)) {
       seen.set(key, {

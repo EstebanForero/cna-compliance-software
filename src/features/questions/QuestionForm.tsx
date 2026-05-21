@@ -20,7 +20,9 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import type { GuidelineAspect, NewQuestion, QuestionFormat } from "@/lib/types";
 
-import { AudienceSelector } from "./AudienceSelector";
+import type { InstrumentDefinition } from "@/lib/types";
+
+import { InstrumentAudienceSelector } from "./InstrumentAudienceSelector";
 import { LineamentHierarchyPicker } from "./LineamentHierarchyPicker";
 import { QuestionResponseEditor } from "./QuestionResponseEditor";
 import {
@@ -43,6 +45,7 @@ type QuestionFormProps = {
   selectedLineament: GuidelineAspect | null;
   lineamentOptions: GuidelineAspect[];
   audienceOptions: string[];
+  instruments: InstrumentDefinition[];
   choiceOptions: ChoiceOption[];
   setChoiceOptions: Dispatch<SetStateAction<ChoiceOption[]>>;
   onChooseLineament: (aspectId: string) => void;
@@ -56,6 +59,7 @@ export const QuestionForm = memo(function QuestionForm({
   selectedLineament,
   lineamentOptions,
   audienceOptions,
+  instruments,
   choiceOptions,
   setChoiceOptions,
   onChooseLineament,
@@ -164,9 +168,10 @@ export const QuestionForm = memo(function QuestionForm({
               </p>
             )}
           </div>
-          <AudienceSelector
+          <InstrumentAudienceSelector
             selected={draft.audiences}
-            options={audienceOptions}
+            audienceOptions={audienceOptions}
+            instruments={instruments}
             onChange={(audiences) => setDraft({ ...draft, audiences })}
           />
           <Textarea

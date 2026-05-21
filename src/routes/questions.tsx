@@ -59,10 +59,18 @@ function QuestionsPage() {
   const [editingQuestionId, setEditingQuestionId] = useState<string | null>(null);
   const [notice, setNotice] = useState("");
   const queryClient = useQueryClient();
-  const questions = useQuery({ queryKey: ["questions"], queryFn: api.questions });
+  const workspace = useQuery({ queryKey: ["workspace"], queryFn: api.workspace });
+  const questions = useQuery({
+    queryKey: ["questions"],
+    queryFn: api.questions,
+  });
   const aspects = useQuery({
     queryKey: ["guideline-aspects"],
     queryFn: api.guidelineAspects,
+  });
+  const instruments = useQuery({
+    queryKey: ["instrument-definitions"],
+    queryFn: api.instrumentDefinitions,
   });
 
   const selectedLineament = useMemo(
@@ -99,6 +107,20 @@ function QuestionsPage() {
     const start = (page - 1) * questionPageSize;
     return filtered.slice(start, start + questionPageSize);
   }, [filtered, page]);
+  const visibleQuestionIds = useMemo(
+    () => paginatedQuestions.map((question) => question.id),
+    [paginatedQuestions],
+  );
+  const locks = useQuery({
+    queryKey: ["collaboration-locks", "question", visibleQuestionIds],
+    queryFn: () =>
+      api.collaborationLocksForResources({
+        resourceType: "question",
+        resourceIds: visibleQuestionIds,
+      }),
+    refetchInterval: workspace.data?.tursoConnected ? 10000 : false,
+    enabled: Boolean(workspace.data?.tursoConnected && visibleQuestionIds.length > 0),
+  });
 
   const createQuestion = useMutation({
     mutationFn: (question: NewQuestion) =>
@@ -128,13 +150,40 @@ function QuestionsPage() {
       api.updateQuestion({
         questionId,
         question: prepareQuestionForSave(question, choiceOptions),
+        expectedUpdatedAt:
+          questions.data?.find((item) => item.id === questionId)?.updatedAt ?? null,
       }),
     onSuccess: async () => {
+      if (editingQuestionId) {
+        releaseLock.mutate({
+          resourceType: "question",
+          resourceId: editingQuestionId,
+        });
+      }
       setEditingQuestionId(null);
       setNotice("Pregunta actualizada y marcada segun impacto contra la linea base.");
       await queryClient.invalidateQueries({ queryKey: ["questions"] });
       await queryClient.invalidateQueries({ queryKey: ["dashboard"] });
       await queryClient.invalidateQueries({ queryKey: ["baseline-status"] });
+    },
+    onError: (error) => {
+      setNotice(error instanceof Error ? error.message : "No se pudo actualizar la pregunta.");
+    },
+  });
+  const acquireLock = useMutation({
+    mutationFn: api.acquireCollaborationLock,
+    onSuccess: async (_, request) => {
+      setEditingQuestionId(request.resourceId);
+      await queryClient.invalidateQueries({ queryKey: ["collaboration-locks"] });
+    },
+    onError: (error) => {
+      setNotice(error instanceof Error ? error.message : "Otro editor esta modificando esta pregunta.");
+    },
+  });
+  const releaseLock = useMutation({
+    mutationFn: api.releaseCollaborationLock,
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["collaboration-locks"] });
     },
   });
 
@@ -178,9 +227,49 @@ function QuestionsPage() {
       window.history.replaceState(null, "", window.location.pathname);
     }
   }, []);
-  const handleEditQuestion = useCallback((questionId: string) => {
-    setEditingQuestionId((current) => (current === questionId ? null : questionId));
-  }, []);
+  const lockByResource = useMemo(
+    () =>
+      new Map(
+        (locks.data ?? [])
+          .filter((lock) => lock.resourceType === "question")
+          .map((lock) => [lock.resourceId, lock] as const),
+      ),
+    [locks.data],
+  );
+  const currentEditorName = workspace.data?.editorProfile?.fullName ?? "";
+  const handleEditQuestion = useCallback(
+    (questionId: string) => {
+      if (editingQuestionId === questionId) {
+        releaseLock.mutate({ resourceType: "question", resourceId: questionId });
+        setEditingQuestionId(null);
+        return;
+      }
+      if (!workspace.data?.tursoConnected) {
+        setEditingQuestionId(questionId);
+        return;
+      }
+      const lock = lockByResource.get(questionId);
+      if (lock && lock.editorName !== currentEditorName) {
+        setNotice(`Esta pregunta esta siendo editada por ${lock.editorName}.`);
+        return;
+      }
+      acquireLock.mutate({ resourceType: "question", resourceId: questionId });
+    },
+    [
+      acquireLock,
+      currentEditorName,
+      editingQuestionId,
+      lockByResource,
+      releaseLock,
+      workspace.data?.tursoConnected,
+    ],
+  );
+  const handleCancelEdit = useCallback(() => {
+    if (editingQuestionId && workspace.data?.tursoConnected) {
+      releaseLock.mutate({ resourceType: "question", resourceId: editingQuestionId });
+    }
+    setEditingQuestionId(null);
+  }, [editingQuestionId, releaseLock, workspace.data?.tursoConnected]);
   const handleSaveQuestion = useCallback(
     (questionId: string, question: NewQuestion, choiceOptions: ChoiceOption[]) => {
       updateQuestion.mutate({ questionId, question, choiceOptions });
@@ -223,11 +312,14 @@ function QuestionsPage() {
           editingQuestionId={editingQuestionId}
           lineamentOptions={lineamentOptions}
           audienceOptions={audienceOptions}
+          instruments={instruments.data ?? []}
           isUpdating={updateQuestion.isPending}
+          collaborationLocks={lockByResource}
+          currentEditorName={currentEditorName}
           onSearchChange={setSearch}
           onPageChange={setPage}
           onEditQuestion={handleEditQuestion}
-          onCancelEdit={() => setEditingQuestionId(null)}
+          onCancelEdit={handleCancelEdit}
           onSaveQuestion={handleSaveQuestion}
         />
         <QuestionForm
@@ -237,6 +329,7 @@ function QuestionsPage() {
           selectedLineament={selectedLineament}
           lineamentOptions={lineamentOptions}
           audienceOptions={audienceOptions}
+          instruments={instruments.data ?? []}
           choiceOptions={choiceOptions}
           setChoiceOptions={setChoiceOptions}
           onChooseLineament={chooseLineament}

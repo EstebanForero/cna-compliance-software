@@ -1,7 +1,6 @@
 import { Save, X } from "lucide-react";
 import { memo, useEffect, useMemo, useState } from "react";
 
-import { AudienceSelector } from "@/features/questions/AudienceSelector";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -12,8 +11,9 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import type { GuidelineAspect, NewQuestion, Question, QuestionFormat } from "@/lib/types";
+import type { GuidelineAspect, InstrumentDefinition, NewQuestion, Question, QuestionFormat } from "@/lib/types";
 
+import { InstrumentAudienceSelector } from "./InstrumentAudienceSelector";
 import { LineamentHierarchyPicker } from "./LineamentHierarchyPicker";
 import { QuestionResponseEditor } from "./QuestionResponseEditor";
 import { fillQuestionFromLineament, findLineamentIdForQuestion } from "./lineament";
@@ -30,6 +30,7 @@ type QuestionEditPanelProps = {
   question: Question;
   lineamentOptions: GuidelineAspect[];
   audienceOptions: string[];
+  instruments: InstrumentDefinition[];
   isSaving: boolean;
   onCancel: () => void;
   onSave: (question: NewQuestion, choiceOptions: ChoiceOption[]) => void;
@@ -39,6 +40,7 @@ export const QuestionEditPanel = memo(function QuestionEditPanel({
   question,
   lineamentOptions,
   audienceOptions,
+  instruments,
   isSaving,
   onCancel,
   onSave,
@@ -155,9 +157,10 @@ export const QuestionEditPanel = memo(function QuestionEditPanel({
         ) : null}
       </div>
       <div className="md:col-span-2">
-        <AudienceSelector
+        <InstrumentAudienceSelector
           selected={draft.audiences}
-          options={audienceOptions}
+          audienceOptions={audienceOptions}
+          instruments={instruments}
           onChange={(audiences) => setDraft({ ...draft, audiences })}
         />
       </div>

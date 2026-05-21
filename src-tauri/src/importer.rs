@@ -81,34 +81,33 @@ fn parse_sheet(
     let mut last_characteristic_name = String::new();
     let mut last_aspect_code = String::new();
     let mut last_aspect_description = String::new();
+    let mut last_question_code = String::new();
 
     for (offset, row) in rows.iter().enumerate() {
         let excel_row = header_index + offset + 2;
         let status = parse_status(&get(row, &columns, "estado pregunta"));
-        if matches!(status, QuestionStatus::Delete)
-            || row_has_red_import_signal(marked_cells, &columns, excel_row)
-        {
-            skipped_rows += 1;
-            continue;
-        }
-        let status = status_from_marked_row(marked_cells, &columns, excel_row).unwrap_or(status);
+        let status = if row_has_red_import_signal(marked_cells, &columns, excel_row) {
+            QuestionStatus::Delete
+        } else {
+            status_from_marked_row(marked_cells, &columns, excel_row).unwrap_or(status)
+        };
 
         let scope = parse_scope(&get(row, &columns, "tipo pregunta"));
-        let factor_code = forward_fill(get(row, &columns, "n factor"), &mut last_factor_code);
-        let factor_name = forward_fill(
+        let mut factor_code = forward_fill(get(row, &columns, "n factor"), &mut last_factor_code);
+        let mut factor_name = forward_fill(
             get(row, &columns, "descripcion factor"),
             &mut last_factor_name,
         );
-        let characteristic_code = forward_fill(
+        let mut characteristic_code = forward_fill(
             get(row, &columns, "n caracteristica"),
             &mut last_characteristic_code,
         );
-        let characteristic_name = forward_fill(
+        let mut characteristic_name = forward_fill(
             get(row, &columns, "nombre caracteristica"),
             &mut last_characteristic_name,
         );
-        let aspect_code = forward_fill(get(row, &columns, "n aspecto"), &mut last_aspect_code);
-        let aspect_description = forward_fill(
+        let mut aspect_code = forward_fill(get(row, &columns, "n aspecto"), &mut last_aspect_code);
+        let mut aspect_description = forward_fill(
             get(row, &columns, "descripcion aspecto"),
             &mut last_aspect_description,
         );
@@ -170,16 +169,48 @@ fn parse_sheet(
             || characteristic_name.is_empty()
             || aspect_description.is_empty()
         {
-            skipped_rows += 1;
-            continue;
+            factor_code = "sin-factor".into();
+            factor_name = "Sin lineamiento CNA".into();
+            characteristic_code = "sin-caracteristica".into();
+            characteristic_name = "Sin característica CNA".into();
+            aspect_code = "sin-aspecto".into();
+            aspect_description = "Pregunta sin jerarquía CNA en el consolidado".into();
+            let fallback_factor_code =
+                CnaFactorCode::from_str(&factor_code).expect("fallback factor code is non-empty");
+            let aspect_key = AspectKey::new(
+                scope.clone(),
+                fallback_factor_code.clone(),
+                &characteristic_code,
+                &aspect_code,
+            );
+            merge_aspect(
+                &mut aspects,
+                aspect_key,
+                NewGuidelineAspect {
+                    guideline_title: "Lineamiento CNA importado".into(),
+                    scope: scope.clone(),
+                    factor_code: fallback_factor_code,
+                    factor_name: factor_name.clone(),
+                    characteristic_code: characteristic_code.clone(),
+                    characteristic_name: characteristic_name.clone(),
+                    aspect_code: aspect_code.clone(),
+                    aspect_description: aspect_description.clone(),
+                    requires_appreciation: true,
+                },
+            );
         }
         let aspect_code = normalized_aspect_code.unwrap_or(aspect_code);
 
-        let code = get(row, &columns, "n pregunta");
-        let code = if code.is_empty() {
-            stable_code(&text)
+        let raw_code = get(row, &columns, "n pregunta");
+        let code = if raw_code.is_empty() {
+            if last_question_code.is_empty() {
+                stable_code(&text)
+            } else {
+                last_question_code.clone()
+            }
         } else {
-            code
+            last_question_code = raw_code.clone();
+            raw_code
         };
         let audience = audience_from_excel(
             get(row, &columns, "publico"),
@@ -363,11 +394,7 @@ fn merge_question(questions: &mut HashMap<String, NewQuestion>, incoming: NewQue
                     current.audiences.push(audience.clone());
                 }
             }
-            if matches!(current.status, QuestionStatus::Keep)
-                && !matches!(incoming.status, QuestionStatus::Keep)
-            {
-                current.status = incoming.status.clone();
-            }
+            current.status = incoming.status.clone();
             if current
                 .justification
                 .as_deref()
@@ -602,7 +629,15 @@ mod tests {
         assert!(workbook
             .questions
             .iter()
-            .all(|question| question.status != QuestionStatus::Delete));
+            .any(|question| question.status == QuestionStatus::Delete));
+        assert!(workbook
+            .questions
+            .iter()
+            .any(|question| question.code == "1"));
+        assert!(workbook
+            .questions
+            .iter()
+            .all(|question| !question.code.starts_with("IMP-")));
         assert!(workbook.guideline_aspects.iter().all(|aspect| !aspect
             .characteristic_code
             .trim()

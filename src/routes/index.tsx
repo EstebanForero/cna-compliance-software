@@ -14,6 +14,7 @@ import { useState } from "react";
 
 import { BaselineCard } from "@/features/dashboard/BaselineCard";
 import { EmptyWorkspaceImportDialog } from "@/features/dashboard/EmptyWorkspaceImportDialog";
+import { InstrumentConfiguration } from "@/features/instruments/InstrumentConfiguration";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -116,7 +117,7 @@ function DashboardPage() {
         <section className="grid gap-4 lg:grid-cols-3">
           <SetupStep
             step="1"
-            title="Workspace"
+            title="Configuración"
             description="Conecte Microsoft y elija carpeta OneDrive o Graph app-folder."
             to="/workspace"
             icon={<FileUp />}
@@ -242,6 +243,8 @@ function DashboardPage() {
           })
         }
       />
+
+      <InstrumentConfiguration />
     </div>
   );
 }
